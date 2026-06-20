@@ -8,13 +8,15 @@ An **agent-centric IDE** built around a persistent, project-level **branching ti
 The six dimensions: **D1** project-level branching work-DAG · **D2** typed node types (edit / validation / stress / deterministic auto-running sanity, + user-definable) · **D3** per-node content-addressed restorable sandbox · **D4** local-first, expandable to shared-team via sandbox-state sharing · **D5** multi-provider with fast switching · **D6** lineage-aware managed context + handoff docs.
 
 ## Repo status
-**Foundation in progress — F0, F1, F2 complete; F3 (headless core) next.** A Rust cargo workspace under `crates/` is being built phase by phase per `docs/TODO.md`. Current: 13 crates, **396 tests green**, clippy `-D warnings` + rustfmt clean, no stub markers; all on branch `feat/f0-byte-identity` (commits `F0 3650961`, `F1 d56ff26`, `F2 1d3a90b`). `docs/TODO.md` is the live source of progress — read it for the exact next step.
+**Foundation COMPLETE — F0–F4 all done; feature phases P5–P9 are next (purely additive).** A Rust cargo workspace under `crates/` built phase by phase per `docs/TODO.md`. Current: **26 crates, 826 tests green**, clippy `-D warnings` + rustfmt clean, no stub macros; all on branch `feat/f0-byte-identity`. Every load-bearing contract is frozen with exactly one real impl, so P5–P9 add implementations behind existing seams — never edit a frozen contract (see plan §9 D-1…D-15 first). `docs/TODO.md` is the live source of progress — read it for the exact next step.
 
 - F0 `spork-hash`/`-canon`/`-ignore`/`-cas`/`-asset`/`-cas-cli`: content-addressed store (BLAKE3 + FastCDC), canonical identity, ignore profile, asset store.
 - F1 `spork-log`/`-projection`/`-migrate`: append-only hash-chained event log + single writer actor + rebuildable projection + migration registry.
 - F2 `spork-status`/`-edges`/`-registry`/`-graph`: NodeEnvelope, NodeTypeRegistry, typed acyclic edges, effective_status — the graph is a pure projection of the F1 log.
+- F3 (headless) `spork-ipc`/`-broker`/`-vault`/`-stream`/`-drift`/`-restore`/`-git`/`-daemon`: typed IPC (opId/events), capability broker, credential vault, dual-channel stream, three-source drift capture, atomic dual-restore, non-invasive git — driven by a headless client.
+- F4 `spork-exec`/`-runner`/`-provider`/`-context`/`-merge`: worktree-on-CoW execution + scheduler + lease/reaper + EnvManifest; Runner SPI + one ResultEnvelope + content-addressed cache; provider port + canonical-transcript mapping (offline AnthropicAdapter); cache-aligned context compiler + handoff; merge schemas.
 
-**Deferred — F3-UI (Tauri/React DAG canvas):** split out (TODO §F3-UI, plan §11.5). Build it only when a GUI-capable environment is available AND the backend is complete through ≥ F4 (recommended: right after P5). It binds to the F3-frozen IPC/view-model contracts, so it is additive — do not block backend phases on it, and do not attempt it headlessly here.
+**Deferred — F3-UI (Tauri/React DAG canvas):** split out (TODO §F3-UI, plan §11.5). The backend is now through F4, so the remaining gate is a **GUI-capable environment**; recommended pick-up is right after P5. It binds to the F3-frozen IPC/view-model contracts, so it is additive — do not block P-phases on it, and do not attempt it headlessly here.
 
 ## The documents (in `docs/`)
 | File | Role |
