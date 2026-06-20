@@ -1,0 +1,12 @@
+[package]
+name = "spork-registry"
+version = "0.1.0"
+edition = "2021"
+description = "Spork node-type registry: families, typed ports, and versioned NodeTypeDescriptors with mixed-version resolution (DESIGN §6.5, §7.1, §9.1, §9.2, §14.5)."
+
+[dependencies]
+spork-edges = { path = "../spork-edges" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+semver = { workspace = true, features = ["serde"] }
+thiserror = { workspace = true }

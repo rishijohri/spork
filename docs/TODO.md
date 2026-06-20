@@ -9,7 +9,7 @@
 - **C5 (evolution-safe):** every persisted struct carries a `schema_version` + a registered migration from its first commit.
 - Status: `[ ]` todo · `[~]` in progress · `[x]` done. Keep this file updated as the single source of progress.
 
-**Current status:** **F0 + F1 complete** — 9 crates, **289 tests green**, clippy/fmt clean, no stub markers. F0: content-addressing/dedup/canonical-identity, cold capture ~0.07 ms/file. F1: append-only hash-chained log + single writer actor + migration registry + rebuildable projection (replay = drop-and-rebuild bit-for-bit; tamper detection; ~8–18k events/s). Committed on `feat/f0-byte-identity` (F0 `3650961`, F1 `d56ff26`). Next: **F2 — Typed-Graph Contracts as Data**.
+**Current status:** **F0 + F1 + F2 complete** — 13 crates, **396 tests green**, clippy/fmt clean, no stub markers. F0: content-addressing/dedup/canonical-identity. F1: hash-chained log + single writer actor + migration registry + rebuildable projection. F2: `NodeEnvelope` + `NodeTypeRegistry` + typed acyclic edges + `effective_status`, graph as a pure projection of the F1 log (drop-and-rebuild identical). Committed on `feat/f0-byte-identity`. Next: **F3 — Daemon/Renderer Seam, Security Boundary & Interactive Core**.
 
 ---
 
@@ -78,19 +78,20 @@ These are foundation infrastructure, not features — wired in behind frozen sea
 **Freeze before starting:** `NodeEnvelope` field set + column-vs-JSON split · `NodeTypeDescriptor` schema + `ownsSnapshot`-at-registration rule + built-ins-use-the-same-registry · typed-edge set + acyclicity-on-insert + refs-as-GC-roots · `payloadSchemaVersion` lazy-upgrade + mixed-descriptor-version retention · reserved `revoked-provenance` field (Q9 direction).
 
 **Build:**
-- [ ] `crates/spork-graph/` — `NodeEnvelope` with hot fields (`status`, `is_stale`, `snapshot_hash`, test-pass counts) as **indexed columns, not JSON**
-- [ ] `crates/spork-registry/` — `NodeTypeRegistry.{register,resolve,list}`; `register()` rejects `ownsSnapshot`/`contentRef` mismatch; one built-in `Snapshot` descriptor registered through the **public** path
-- [ ] `crates/spork-edges/` — typed edges, acyclicity-on-insert, Refs as GC roots
-- [ ] `crates/spork-status/` — `effectiveStatus` fold (one token per `(status, is_stale)`, incl. `cancelled`)
+- [x] `crates/spork-graph/` — `NodeEnvelope` (hot fields `status`/`is_stale`/`snapshot_hash` as **indexed columns, not JSON**); graph events; SQLite graph projection over the F1 log; `GraphService` validate-then-append command layer; `lineage_hash`; lazy payload upgrade; one dogfooded built-in
+- [x] `crates/spork-registry/` — `NodeTypeRegistry.{register,resolve,list}`; rejects `ownsSnapshot`/`contentRef` mismatch + duplicate version; mixed-version retention; reserved `revoked_provenance`; built-ins register through the **public** path
+- [x] `crates/spork-edges/` — typed `EdgeType` set, `would_create_cycle` acyclicity, `RefKind` (refs as GC roots)
+- [x] `crates/spork-status/` — `effective_status` fold (one token per `(Lifecycle, is_stale)`, incl. `Cancelled`)
 
 **Definition of Done:**
-- [ ] descriptor claiming `ownsSnapshot` with no `contentRef` → **refused at registration**
-- [ ] cycle-creating edge → rejected against the projection (always a DAG)
-- [ ] node under `typeVersion` v1 still resolves staleness/edges/restore after a v2 descriptor registers (descriptors retained, not replaced)
-- [ ] older-payload node reads back via lazy upgrade, no history rewrite
-- [ ] `effectiveStatus` returns exactly one token for every `(status, isStale)` pair incl. `cancelled`
+- [x] descriptor claiming `ownsSnapshot` with no `SnapshotRef` out-port → **refused at registration** (and `create_node` owns_snapshot-without-hash refused)
+- [x] cycle-creating edge → rejected against the projection; graph stays a DAG (proptest w/ Kahn witness)
+- [x] node under `typeVersion` 1.0.0 still resolves/restores after 2.0.0 registers (descriptors retained, not replaced)
+- [x] older-payload node reads back via lazy upgrade (spork-migrate), raw stored row unchanged
+- [x] `effective_status` returns exactly one token for every `(Lifecycle, is_stale)` pair incl. `Cancelled`
+- [x] drop-and-rebuild graph projection from the log → identical canonical digest
 
-**Demoable:** register a descriptor exactly as a third party would, create nodes/edges, watch `lineageHash` populate, see a cycle edge rejected and a malformed descriptor refused.
+**Demoable:** register a descriptor exactly as a third party would, create nodes/edges, watch `lineage_hash` populate, see a cycle edge rejected and a malformed descriptor refused. ✅ verified (396 tests green). **Review fixed 2 frozen-contract defects: descriptor-driven `family` (not a kind heuristic), and `MERGE_PARENT` symmetric parent/child (so staleness invalidation reaches merge nodes).**
 
 ---
 

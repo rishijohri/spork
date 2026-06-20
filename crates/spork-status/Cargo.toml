@@ -1,0 +1,12 @@
+[package]
+name = "spork-status"
+version = "0.1.0"
+edition = "2021"
+description = "Spork lifecycle and effective-status tokens: the total effectiveStatus fold over (Lifecycle, is_stale) (DESIGN §7.3, §6.2)."
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

@@ -683,6 +683,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "semver"
+version = "1.0.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
+dependencies = [
+ "serde",
+ "serde_core",
+]
+
+[[package]]
 name = "serde"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -800,6 +810,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "spork-edges"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+ "ulid",
+]
+
+[[package]]
+name = "spork-graph"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "rusqlite",
+ "semver",
+ "serde",
+ "serde_json",
+ "spork-canon",
+ "spork-edges",
+ "spork-hash",
+ "spork-log",
+ "spork-migrate",
+ "spork-projection",
+ "spork-registry",
+ "spork-status",
+ "tempfile",
+ "thiserror",
+ "ulid",
+]
+
+[[package]]
 name = "spork-hash"
 version = "0.1.0"
 dependencies = [
@@ -864,6 +906,26 @@ dependencies = [
  "tempfile",
  "thiserror",
  "ulid",
+]
+
+[[package]]
+name = "spork-registry"
+version = "0.1.0"
+dependencies = [
+ "semver",
+ "serde",
+ "serde_json",
+ "spork-edges",
+ "thiserror",
+]
+
+[[package]]
+name = "spork-status"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]

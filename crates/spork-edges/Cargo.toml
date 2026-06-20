@@ -1,0 +1,13 @@
+[package]
+name = "spork-edges"
+version = "0.1.0"
+edition = "2021"
+description = "Spork typed edge set, ref kinds, and the acyclicity (would-create-cycle) algorithm that keeps the graph a DAG (DESIGN §6.3)."
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+ulid = { workspace = true, features = ["serde"] }
+
+[dev-dependencies]
+serde_json = { workspace = true }

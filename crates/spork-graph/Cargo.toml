@@ -1,0 +1,25 @@
+[package]
+name = "spork-graph"
+version = "0.1.0"
+edition = "2021"
+description = "Spork typed graph: the NodeEnvelope contract, graph events, the SQLite-backed graph projection, and the validating command/service layer (DESIGN §6.2, §6.3, §6.5, §7.x, §9.x, §14.5, A.1)."
+
+[dependencies]
+spork-status = { path = "../spork-status" }
+spork-edges = { path = "../spork-edges" }
+spork-registry = { path = "../spork-registry" }
+spork-hash = { path = "../spork-hash" }
+spork-canon = { path = "../spork-canon" }
+spork-log = { path = "../spork-log" }
+spork-projection = { path = "../spork-projection" }
+spork-migrate = { path = "../spork-migrate" }
+rusqlite = { workspace = true }
+ulid = { workspace = true, features = ["serde"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+semver = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+proptest = { workspace = true }

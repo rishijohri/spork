@@ -10,6 +10,10 @@ members = [
     "crates/spork-migrate",
     "crates/spork-log",
     "crates/spork-projection",
+    "crates/spork-status",
+    "crates/spork-edges",
+    "crates/spork-registry",
+    "crates/spork-graph",
 ]
 
 # Shared external dependencies pinned once here so every member crate resolves
@@ -29,6 +33,7 @@ clap = { version = "4.6.1", features = ["derive"] }
 anyhow = "1.0.102"
 rusqlite = { version = "0.37.0", features = ["bundled"] }
 ulid = "1.2.1"
+semver = "1.0.27"
 
 # Dev-only shared dependencies.
 proptest = "1.11.0"
