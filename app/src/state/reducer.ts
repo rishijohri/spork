@@ -44,6 +44,32 @@ function placeholderNode(id: Ulid): NodeView {
   };
 }
 
+/**
+ * The observing node kind implied by an observing edge type, or `null` for a
+ * structural (non-observing) edge. An observing result node attached via one of
+ * these edges renders with the matching legend icon/color (validation/stress/
+ * sanity) instead of the neutral Snapshot placeholder.
+ */
+function observingKindForEdge(
+  edge: EdgeView["edgeType"],
+): { kind: string } | null {
+  switch (edge) {
+    case "VALIDATES":
+      return { kind: "validation" };
+    case "STRESSES":
+      return { kind: "stress" };
+    case "CHECKS":
+      return { kind: "sanity" };
+    default:
+      return null;
+  }
+}
+
+/** A placeholder observing result node of the given kind (for an observing edge). */
+function observingResultNode(id: Ulid, kind: string): NodeView {
+  return { ...placeholderNode(id), kind, family: "observing" };
+}
+
 function upsertEdge(edges: EdgeView[], edge: EdgeView): EdgeView[] {
   const exists = edges.some(
     (e) =>
@@ -98,7 +124,16 @@ export function applyOpLogEvent(
         nodes = [...nodes, placeholderNode(ev.from)];
       }
       if (!nodes.some((n) => n.id === ev.to)) {
-        nodes = [...nodes, placeholderNode(ev.to)];
+        // If the edge is an observing check edge, the target is a result node:
+        // mint it with the matching observing kind so it renders with the right
+        // legend icon/color rather than the neutral Snapshot placeholder.
+        const observing = observingKindForEdge(ev.edge);
+        nodes = [
+          ...nodes,
+          observing
+            ? observingResultNode(ev.to, observing.kind)
+            : placeholderNode(ev.to),
+        ];
       }
       nodes = nodes.map((n) =>
         n.id === ev.to && !n.parentIds.includes(ev.from)

@@ -50,7 +50,14 @@ export function NodeDetails(): JSX.Element {
         <code className="spork-details-id">{node.id}</code>
       </header>
 
-      <ActionToolbar node={node} ariaLabel="Node actions" />
+      <ActionToolbar
+        node={node}
+        ariaLabel="Node actions"
+        onActionDone={(action) => {
+          // View opens the diff surface (the "see this node's state" action).
+          if (action.id === "view") setTab("diff");
+        }}
+      />
 
       <nav className="spork-details-tabs" role="tablist">
         {(["conversation", "diff", "results"] as const).map((t) => (

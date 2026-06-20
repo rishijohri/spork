@@ -38,6 +38,28 @@ export interface PendingOp {
 /** The bottom run-rail line buffer, keyed by node id. */
 export type RunRail = Record<Ulid, string[]>;
 
+/** The severity of an activity-log entry (drives the rail's per-line styling). */
+export type ActivityLevel = "info" | "success" | "error";
+
+/**
+ * One human-readable line in the activity log — the outcome (or error) of a
+ * toolbar action. Surfaced in the bottom Run-output rail so every action gives
+ * the user feedback, even the ones that create no canvas node.
+ */
+export interface ActivityEntry {
+  /** A stable id for the React key. */
+  id: string;
+  /** When the entry was appended (epoch ms). */
+  ts: number;
+  /** Severity, driving the per-line style (muted / green / red). */
+  level: ActivityLevel;
+  /** The human-readable outcome line. */
+  text: string;
+}
+
+/** How many activity entries the bounded log retains (oldest dropped first). */
+export const ACTIVITY_LOG_LIMIT = 100;
+
 export interface UiState {
   /** The live, reduced view-model. */
   view: GraphView;
@@ -49,6 +71,12 @@ export interface UiState {
   pending: Record<Ulid, PendingOp>;
   /** Buffered ephemeral run/chat output per node (bottom rail / chat tab). */
   rail: RunRail;
+  /**
+   * A bounded, newest-last activity log of action outcomes + errors, rendered in
+   * the bottom Run-output rail so every toolbar action gives the user feedback —
+   * including the ones (git/branch/restore) that create no canvas node.
+   */
+  activity: ActivityEntry[];
   /** The highest op-log `seq` folded so far (gap detection). */
   lastSeq: number;
 
@@ -71,6 +99,11 @@ export interface UiState {
   ingestEvent: (event: OpLogEvent) => void;
   /** Buffer one ephemeral frame onto the node's rail (non-blocking). */
   ingestEphemeral: (frame: EphemeralFrame) => void;
+  /**
+   * Append one human-readable entry to the bounded activity log (newest last).
+   * The log is trimmed to `ACTIVITY_LOG_LIMIT` so it never grows without bound.
+   */
+  logActivity: (level: ActivityLevel, text: string) => void;
   /** Reset the store to its initial state (tests). */
   reset: () => void;
 }
@@ -105,8 +138,12 @@ const INITIAL = {
   defaultModel: "claude-sonnet-4-6",
   pending: {} as Record<Ulid, PendingOp>,
   rail: {} as RunRail,
+  activity: [] as ActivityEntry[],
   lastSeq: 0,
 };
+
+/** A monotonic counter making each activity entry's React key unique. */
+let activitySeq = 0;
 
 export const useUiStore = create<UiState>((set) => ({
   ...INITIAL,
@@ -165,10 +202,30 @@ export const useUiStore = create<UiState>((set) => ({
       };
     }),
 
+  logActivity: (level, text) =>
+    set((s) => {
+      activitySeq += 1;
+      const entry: ActivityEntry = {
+        id: `act-${activitySeq}`,
+        ts: Date.now(),
+        level,
+        text,
+      };
+      // Append newest-last, then trim the oldest beyond the bound.
+      const next = [...s.activity, entry];
+      return {
+        activity:
+          next.length > ACTIVITY_LOG_LIMIT
+            ? next.slice(next.length - ACTIVITY_LOG_LIMIT)
+            : next,
+      };
+    }),
+
   reset: () =>
     set({
       ...INITIAL,
       pending: {},
       rail: {},
+      activity: [],
     }),
 }));

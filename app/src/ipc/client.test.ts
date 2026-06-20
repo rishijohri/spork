@@ -14,8 +14,9 @@ import {
   getDispatchedCommands,
   getOpenedProjects,
   emitOpLogEvent,
+  seedDemoGraph,
 } from "./mock";
-import type { GraphView } from "./types";
+import type { EdgeType, GraphView, OpLogEvent } from "./types";
 
 const NODE = "00000000000000000000000001";
 
@@ -132,4 +133,41 @@ describe("browser-mode fallback (no Tauri runtime)", () => {
       true,
     );
   });
+});
+
+describe("mock auto-emit fidelity — NODE_RUN_CHECK by spec kind", () => {
+  // In browser-mock mode a NODE_RUN_CHECK forwards the observing edge keyed to
+  // its spec kind (VALIDATES/STRESSES/CHECKS) so the result node renders with the
+  // matching legend icon/color — not the neutral Snapshot placeholder.
+  const cases: { kind: string; edge: EdgeType }[] = [
+    { kind: "validation", edge: "VALIDATES" },
+    { kind: "stress", edge: "STRESSES" },
+    { kind: "sanity", edge: "CHECKS" },
+  ];
+
+  for (const { kind, edge } of cases) {
+    it(`emits an ${edge} edge for a "${kind}" check`, async () => {
+      seedDemoGraph(); // turns on autoEmit
+      const seen: OpLogEvent[] = [];
+      const unlisten = await listenOpLog((e) => seen.push(e));
+
+      await dispatch({
+        command: "NODE_RUN_CHECK",
+        targetNodeId: NODE,
+        spec: { kind },
+      });
+      // Auto-emitted events land on a microtask after the reply.
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const edgeEvent = seen.find((e) => e.type === "EDGE_ADDED");
+      expect(edgeEvent).toBeDefined();
+      if (edgeEvent && edgeEvent.type === "EDGE_ADDED") {
+        expect(edgeEvent.edge).toBe(edge);
+      }
+      // The result is still recorded (autoEmit behavior preserved).
+      expect(seen.some((e) => e.type === "RESULT_RECORDED")).toBe(true);
+      unlisten();
+    });
+  }
 });

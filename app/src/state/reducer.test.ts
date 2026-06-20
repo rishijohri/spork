@@ -79,6 +79,47 @@ describe("applyOpLogEvent", () => {
     expect(node?.status).toBe("passed");
   });
 
+  it("mints an observing result node of the right kind from a check edge", () => {
+    // A NODE_RUN_CHECK forwards EDGE_ADDED (the observing edge) then
+    // RESULT_RECORDED. The result node must render with the matching observing
+    // kind (icon/color = legend), not the neutral Snapshot placeholder.
+    const cases: { edge: OpLogEvent; kind: string }[] = [
+      {
+        edge: { type: "EDGE_ADDED", seq: 1, from: A, to: B, edge: "VALIDATES" },
+        kind: "validation",
+      },
+      {
+        edge: { type: "EDGE_ADDED", seq: 1, from: A, to: B, edge: "STRESSES" },
+        kind: "stress",
+      },
+      {
+        edge: { type: "EDGE_ADDED", seq: 1, from: A, to: B, edge: "CHECKS" },
+        kind: "sanity",
+      },
+    ];
+    for (const { edge, kind } of cases) {
+      const view = reduceStream(EMPTY_VIEW, [
+        edge,
+        { type: "RESULT_RECORDED", seq: 2, runId: RUN, nodeId: B },
+      ]);
+      const node = view.nodes.find((n) => n.id === B);
+      expect(node?.kind).toBe(kind);
+      expect(node?.family).toBe("observing");
+      expect(node?.status).toBe("passed");
+    }
+  });
+
+  it("keeps a structural (PARENT_CHILD) edge's placeholder a snapshot", () => {
+    const view = applyOpLogEvent(EMPTY_VIEW, {
+      type: "EDGE_ADDED",
+      seq: 1,
+      from: A,
+      to: B,
+      edge: "PARENT_CHILD",
+    });
+    expect(view.nodes.find((n) => n.id === B)?.kind).toBe("snapshot");
+  });
+
   it("ignores an unknown future event variant (forward-tolerant)", () => {
     // A NEWER daemon emits a variant this build has never seen. The reducer must
     // return the fold unchanged, never throw (CLAUDE.md C2/C5).

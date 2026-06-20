@@ -49,6 +49,13 @@ interface MockState {
   openedProjects: string[];
   /** Per-command-tag canned replies for `dispatch`. */
   dispatchReplies: Partial<Record<Command["command"], CommandResult>>;
+  /**
+   * Per-command-tag errors for `dispatch`: when set, dispatching that command
+   * REJECTS with this error instead of replying — modeling a denied capability
+   * (e.g. NetConnect-gated Push) or a real backend failure, so the UI's
+   * error-surfacing path can be exercised.
+   */
+  dispatchErrors: Partial<Record<Command["command"], Error>>;
   /** A fallback reply factory when no per-tag reply is registered. */
   defaultDispatchReply: (cmd: Command) => CommandResult;
   /** Active listeners by Tauri event name. */
@@ -79,6 +86,7 @@ function freshState(): MockState {
     dispatched: [],
     openedProjects: [],
     dispatchReplies: {},
+    dispatchErrors: {},
     defaultDispatchReply: (cmd) => defaultReplyFor(cmd),
     listeners: new Map(),
     nextListenerId: 1,
@@ -139,6 +147,35 @@ function mintedIdsFor(cmd: Command): Record<string, unknown> {
       return { refId: cmd.name };
     default:
       return {};
+  }
+}
+
+/**
+ * The observing node kind a `NODE_RUN_CHECK` spec describes. The spec is an
+ * opaque `unknown` on the command (the frozen contract carries no shape), so we
+ * read its `kind` defensively and default to "validation".
+ */
+function checkSpecKind(spec: unknown): "validation" | "stress" | "sanity" {
+  if (spec !== null && typeof spec === "object") {
+    const kind = (spec as Record<string, unknown>)["kind"];
+    if (kind === "stress" || kind === "sanity" || kind === "validation") {
+      return kind;
+    }
+  }
+  return "validation";
+}
+
+/** The typed edge that attaches an observing result of the given check kind. */
+function edgeForCheckKind(
+  kind: "validation" | "stress" | "sanity",
+): EdgeType {
+  switch (kind) {
+    case "stress":
+      return "STRESSES";
+    case "sanity":
+      return "CHECKS";
+    case "validation":
+      return "VALIDATES";
   }
 }
 
@@ -211,13 +248,18 @@ function autoEmitFor(cmd: Command, reply: CommandResult): OpLogEvent[] {
       break;
     case "NODE_RUN_CHECK":
       if (nodeId) {
-        const edge: EdgeType = "VALIDATES";
+        // The check kind (validation/stress/sanity) drives the TYPED edge
+        // (VALIDATES/STRESSES/CHECKS). The EDGE_ADDED is emitted FIRST so the
+        // reducer mints the result node from the observing edge with the matching
+        // observing kind — so the canvas icon/color matches the legend instead of
+        // the neutral Snapshot placeholder. RESULT_RECORDED then marks it passed.
+        const kind = checkSpecKind(cmd.spec);
         events.push({
           type: "EDGE_ADDED",
           seq: seq(),
           from: cmd.targetNodeId,
           to: nodeId,
-          edge,
+          edge: edgeForCheckKind(kind),
         });
         events.push({
           type: "RESULT_RECORDED",
@@ -275,6 +317,16 @@ export function setDispatchReply(
   reply: CommandResult,
 ): void {
   state.dispatchReplies[tag] = reply;
+}
+
+/**
+ * Register an error for a specific command tag: dispatching it will REJECT with
+ * this error instead of replying. Models a denied capability (e.g. the
+ * NetConnect-gated Push) or a backend failure so the UI's error-surfacing path
+ * can be exercised in tests.
+ */
+export function setDispatchError(tag: Command["command"], error: Error): void {
+  state.dispatchErrors[tag] = error;
 }
 
 /** The recorded list of dispatched commands, in call order. */
@@ -423,6 +475,10 @@ export async function mockInvoke<T>(
     case "dispatch": {
       const cmd = args?.["command"] as Command;
       state.dispatched.push(cmd);
+      // A registered error models a denied capability / backend failure: reject
+      // so the caller's error-surfacing path runs (the real `invoke` rejects too).
+      const err = state.dispatchErrors[cmd.command];
+      if (err) throw err;
       const reply =
         state.dispatchReplies[cmd.command] ?? state.defaultDispatchReply(cmd);
       // In browser mock mode, forward the plausible op-log events the real

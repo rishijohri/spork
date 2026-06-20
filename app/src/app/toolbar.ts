@@ -19,7 +19,8 @@
 // (View / Analyze / Metadata) carry no command and are local-only UI selections,
 // so they never touch the daemon.
 
-import type { Command, NodeView, Ulid } from "../ipc/types";
+import type { Command, CommandResult, NodeView, Ulid } from "../ipc/types";
+import type { ActivityLevel } from "../state/store";
 import { dispatch } from "../ipc/client";
 
 /** The context a command builder needs beyond the selected node. */
@@ -149,6 +150,90 @@ export interface ToolbarActionOutcome {
 /** Hooks `runToolbarAction` uses to drive optimistic UI (the store actions). */
 export interface OptimisticHooks {
   beginOptimistic: (opId: Ulid, label: string, subjectId?: Ulid | null) => void;
+  /**
+   * Append a human-readable outcome/error line to the activity log so every
+   * action — including the ones (git/branch/restore) that create no canvas node
+   * — gives the user visible feedback in the Run-output rail. Optional so older
+   * callers/tests that only need the optimistic path can omit it.
+   */
+  logActivity?: (level: ActivityLevel, text: string) => void;
+}
+
+/** A short, human-friendly form of a (long) ULID for activity lines. */
+function shortId(id: Ulid | null | undefined): string {
+  if (!id) return "node";
+  // The trailing characters carry the distinguishing entropy of a ULID.
+  return id.length > 8 ? `…${id.slice(-8)}` : id;
+}
+
+/** The spec shape NODE_RUN_CHECK carries (an opaque `unknown` on the command). */
+function checkKind(spec: unknown): string {
+  if (spec !== null && typeof spec === "object") {
+    const kind = (spec as Record<string, unknown>)["kind"];
+    if (typeof kind === "string") return kind;
+  }
+  return "validation";
+}
+
+/**
+ * Build the human-readable activity line + level for a settled action, from the
+ * command that was dispatched and the daemon's reply. Returns `null` when an
+ * action warrants no line (it never silently drops a *mutation* outcome — only
+ * truly content-free replies). Read-only / local-only actions are handled by the
+ * caller (they have no command).
+ */
+export function activityLineFor(
+  action: ToolbarAction,
+  node: NodeView | null,
+  command: Command,
+  res: CommandResult,
+): { level: ActivityLevel; text: string } | null {
+  const id = shortId(node?.id);
+  switch (command.command) {
+    case "GIT_EXPORT":
+      if (res.result === "GIT") {
+        return {
+          level: "success",
+          text: `Committed ${id} → ${res.branch} @ ${res.commitSha.slice(0, 8)}`,
+        };
+      }
+      return null;
+    case "GIT_PUSH":
+      if (res.result === "GIT") {
+        return {
+          level: "success",
+          text: `Pushed ${res.branch} → ${command.remote ?? "origin"}`,
+        };
+      }
+      return null;
+    case "BRANCH_FORK": {
+      const refId =
+        res.result === "MUTATION" && typeof res.ids["refId"] === "string"
+          ? (res.ids["refId"] as string)
+          : command.name;
+      return { level: "success", text: `Created branch ${refId}` };
+    }
+    case "NODE_RESTORE":
+      return {
+        level: "success",
+        text: `Restored ${id} (code + conversation)`,
+      };
+    case "NODE_RUN_CHECK":
+      return {
+        level: "info",
+        text: `Queued ${checkKind(command.spec)} check on ${id}`,
+      };
+    case "NODE_CREATE":
+      return { level: "success", text: `Created ${node?.kind ?? "node"}` };
+    case "BRANCH_MERGE":
+      return { level: "success", text: `Merged into ${command.intoRef}` };
+    default:
+      // A sensible success line for any other mutation; otherwise no line.
+      if (res.result === "MUTATION") {
+        return { level: "success", text: `${action.label} completed` };
+      }
+      return null;
+  }
 }
 
 /**
@@ -175,7 +260,13 @@ function mintedSubjectId(ids: Record<string, unknown>): Ulid | null {
  * path.
  *
  * A read-only / local-only action (no `buildCommand` or a `null` command) is a
- * no-op against the daemon: it returns immediately with no `opId`.
+ * no-op against the daemon: it logs an optional info line and returns with no
+ * `opId`.
+ *
+ * Crucially, this NEVER throws out of itself: a rejected dispatch (a denied
+ * capability such as NetConnect-gated Push, or a real backend error) is caught
+ * and surfaced as an ERROR activity line so the user SEES the failure instead of
+ * getting silence. The caller's `finally` (the in-flight reset) still runs.
  */
 export async function runToolbarAction(
   action: ToolbarAction,
@@ -184,13 +275,44 @@ export async function runToolbarAction(
   hooks: OptimisticHooks,
 ): Promise<ToolbarActionOutcome> {
   const command = action.buildCommand ? action.buildCommand(node, ctx) : null;
-  if (command === null) return { command: null, opId: null };
-
-  const res = await dispatch(command);
-  if (res.result === "MUTATION") {
-    hooks.beginOptimistic(res.opId, action.label, mintedSubjectId(res.ids));
-    return { command, opId: res.opId };
+  if (command === null) {
+    // Read-only / local-only action: no daemon mutation, but still give visible
+    // feedback (e.g. "Viewing …", "Metadata: …") so the click never feels dead.
+    hooks.logActivity?.("info", localActionLine(action, node));
+    return { command: null, opId: null };
   }
-  // A non-mutation reply (a read action wired through here) carries no opId.
-  return { command, opId: null };
+
+  try {
+    const res = await dispatch(command);
+    const line = activityLineFor(action, node, command, res);
+    if (line) hooks.logActivity?.(line.level, line.text);
+
+    if (res.result === "MUTATION") {
+      hooks.beginOptimistic(res.opId, action.label, mintedSubjectId(res.ids));
+      return { command, opId: res.opId };
+    }
+    // A non-mutation reply (an action-shaped git command) carries no opId.
+    return { command, opId: null };
+  } catch (err) {
+    // Surface the failure rather than letting it crash the UI (e.g. Push is
+    // NetConnect-gated and rejects until granted — the user must see that).
+    const message = err instanceof Error ? err.message : String(err);
+    hooks.logActivity?.("error", `${action.label} failed: ${message}`);
+    return { command, opId: null };
+  }
+}
+
+/** The info line for a read-only / local-only action (View / Analyze / Metadata). */
+function localActionLine(action: ToolbarAction, node: NodeView | null): string {
+  const id = shortId(node?.id);
+  switch (action.id) {
+    case "view":
+      return `Viewing ${id}`;
+    case "analyze":
+      return `Analyzing ${id}`;
+    case "metadata":
+      return `Metadata: ${node?.kind ?? "node"}`;
+    default:
+      return `${action.label} ${id}`;
+  }
 }

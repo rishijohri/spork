@@ -1,7 +1,7 @@
 // Store tests (DESIGN.md §14.4) — optimistic correlation + ephemeral buffering.
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { useUiStore } from "./store";
+import { useUiStore, ACTIVITY_LOG_LIMIT } from "./store";
 
 const OP = "00000000000000000000000010";
 const NODE = "00000000000000000000000001";
@@ -80,5 +80,32 @@ describe("useUiStore", () => {
     s.ingestEphemeral({ nodeId: NODE, channel: "RUN_STDOUT", data: "line 1\n" });
     s.ingestEphemeral({ nodeId: NODE, channel: "RUN_STDOUT", data: "line 2\n" });
     expect(useUiStore.getState().rail[NODE]).toEqual(["line 1\n", "line 2\n"]);
+  });
+
+  it("appends activity-log entries newest-last with level + text + timestamp", () => {
+    const s = useUiStore.getState();
+    s.logActivity("info", "first");
+    s.logActivity("success", "second");
+    s.logActivity("error", "third");
+    const { activity } = useUiStore.getState();
+    expect(activity.map((e) => e.text)).toEqual(["first", "second", "third"]);
+    expect(activity.map((e) => e.level)).toEqual(["info", "success", "error"]);
+    // Each entry carries a unique id and a numeric timestamp.
+    expect(new Set(activity.map((e) => e.id)).size).toBe(3);
+    for (const e of activity) expect(typeof e.ts).toBe("number");
+  });
+
+  it("bounds the activity log to ACTIVITY_LOG_LIMIT, dropping the oldest", () => {
+    const s = useUiStore.getState();
+    for (let i = 0; i < ACTIVITY_LOG_LIMIT + 5; i += 1) {
+      s.logActivity("info", `line ${i}`);
+    }
+    const { activity } = useUiStore.getState();
+    expect(activity).toHaveLength(ACTIVITY_LOG_LIMIT);
+    // The oldest five were dropped; the newest line is last.
+    expect(activity[0]?.text).toBe("line 5");
+    expect(activity[activity.length - 1]?.text).toBe(
+      `line ${ACTIVITY_LOG_LIMIT + 4}`,
+    );
   });
 });

@@ -17,8 +17,10 @@ import { useUiStore } from "../state/store";
 import {
   getDispatchedCommands,
   setDispatchReply,
+  setDispatchError,
   fakeUlid,
 } from "../ipc/mock";
+import type { ActivityLevel } from "../state/store";
 import type { NodeView } from "../ipc/types";
 
 const EDIT_ID = "00000000000000000000000001";
@@ -295,5 +297,74 @@ describe("runToolbarAction (unit)", () => {
     );
     expect(outcome).toEqual({ command: null, opId: null });
     expect(getDispatchedCommands()).toHaveLength(0);
+  });
+
+  it("appends a success activity line after a git action settles", async () => {
+    setDispatchReply("GIT_EXPORT", {
+      result: "GIT",
+      branch: `spork/${EDIT_ID}`,
+      commitSha: "abcdef0123456789".padEnd(40, "0"),
+      pushed: false,
+    });
+    const gitExport = TOOLBAR_ACTIONS.find((a) => a.id === "gitExport")!;
+
+    const logged: { level: ActivityLevel; text: string }[] = [];
+    await runToolbarAction(
+      gitExport,
+      editNode(),
+      { defaultModel: "claude-sonnet-4-6" },
+      {
+        beginOptimistic: () => {},
+        logActivity: (level, text) => logged.push({ level, text }),
+      },
+    );
+
+    expect(logged).toHaveLength(1);
+    expect(logged[0]?.level).toBe("success");
+    expect(logged[0]?.text).toContain("Committed");
+    expect(logged[0]?.text).toContain(`spork/${EDIT_ID}`);
+    // The commit SHA is truncated to its first 8 chars.
+    expect(logged[0]?.text).toContain("abcdef01");
+  });
+
+  it("appends an ERROR activity line when dispatch rejects and does NOT throw", async () => {
+    // Model the NetConnect-gated Push: the dispatch rejects until granted. The
+    // user must SEE the failure, and runToolbarAction must not throw.
+    setDispatchError("GIT_PUSH", new Error("capability denied: NetConnect"));
+    const gitPush = TOOLBAR_ACTIONS.find((a) => a.id === "gitPush")!;
+
+    const logged: { level: ActivityLevel; text: string }[] = [];
+    // The promise resolves (does not reject) — runToolbarAction swallows the error.
+    const outcome = await runToolbarAction(
+      gitPush,
+      editNode(),
+      { defaultModel: "claude-sonnet-4-6" },
+      {
+        beginOptimistic: () => {},
+        logActivity: (level, text) => logged.push({ level, text }),
+      },
+    );
+
+    expect(outcome.opId).toBeNull();
+    expect(logged).toHaveLength(1);
+    expect(logged[0]?.level).toBe("error");
+    expect(logged[0]?.text).toContain("capability denied: NetConnect");
+  });
+
+  it("logs an info line for a read-only action (View)", async () => {
+    const view = TOOLBAR_ACTIONS.find((a) => a.id === "view")!;
+    const logged: { level: ActivityLevel; text: string }[] = [];
+    await runToolbarAction(
+      view,
+      editNode(),
+      { defaultModel: "claude-sonnet-4-6" },
+      {
+        beginOptimistic: () => {},
+        logActivity: (level, text) => logged.push({ level, text }),
+      },
+    );
+    expect(logged).toHaveLength(1);
+    expect(logged[0]?.level).toBe("info");
+    expect(logged[0]?.text).toContain("Viewing");
   });
 });
