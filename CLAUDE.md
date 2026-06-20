@@ -8,7 +8,13 @@ An **agent-centric IDE** built around a persistent, project-level **branching ti
 The six dimensions: **D1** project-level branching work-DAG · **D2** typed node types (edit / validation / stress / deterministic auto-running sanity, + user-definable) · **D3** per-node content-addressed restorable sandbox · **D4** local-first, expandable to shared-team via sandbox-state sharing · **D5** multi-provider with fast switching · **D6** lineage-aware managed context + handoff docs.
 
 ## Repo status
-**Design phase complete. No application code yet.** The repo currently contains only the planning docs. The next build step is to scaffold **F0** (the Byte-Identity Substrate). Nothing here is committed to git yet beyond the initial commit.
+**Foundation in progress — F0, F1, F2 complete; F3 (headless core) next.** A Rust cargo workspace under `crates/` is being built phase by phase per `docs/TODO.md`. Current: 13 crates, **396 tests green**, clippy `-D warnings` + rustfmt clean, no stub markers; all on branch `feat/f0-byte-identity` (commits `F0 3650961`, `F1 d56ff26`, `F2 1d3a90b`). `docs/TODO.md` is the live source of progress — read it for the exact next step.
+
+- F0 `spork-hash`/`-canon`/`-ignore`/`-cas`/`-asset`/`-cas-cli`: content-addressed store (BLAKE3 + FastCDC), canonical identity, ignore profile, asset store.
+- F1 `spork-log`/`-projection`/`-migrate`: append-only hash-chained event log + single writer actor + rebuildable projection + migration registry.
+- F2 `spork-status`/`-edges`/`-registry`/`-graph`: NodeEnvelope, NodeTypeRegistry, typed acyclic edges, effective_status — the graph is a pure projection of the F1 log.
+
+**Deferred — F3-UI (Tauri/React DAG canvas):** split out (TODO §F3-UI, plan §11.5). Build it only when a GUI-capable environment is available AND the backend is complete through ≥ F4 (recommended: right after P5). It binds to the F3-frozen IPC/view-model contracts, so it is additive — do not block backend phases on it, and do not attempt it headlessly here.
 
 ## The documents (in `docs/`)
 | File | Role |
@@ -46,6 +52,8 @@ These govern every change. They are the whole point of the plan; do not relax th
 3. **New capability ⇒ new impl behind an existing seam** (plan §5). If you can't add it without editing core/engine code, the seam is wrong — flag it, don't hack around it.
 4. **Touching anything persisted ⇒ add `schema_version` + a migration.** Touching anything hashed ⇒ update golden vectors + bump the generation tag, never rehash in place.
 5. **Secrets** are referenced only by `vaultRef`, resolved only inside the daemon, never written into the CAS (snapshots are exportable). The renderer holds zero secrets.
+6. **Verify before you claim green.** cargo is off PATH — prefix with `export PATH="$HOME/.cargo/bin:$PATH"`. Run `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo fmt --all --check` yourself from the repo root. **Do not trust a subagent's self-report** — they go stale (e.g. an agent adds tests after its last `fmt` run and reports `fmt clean`, but `--check` fails).
+7. **At the end of every phase (required ritual):** check off that phase's Build + DoD boxes in `docs/TODO.md`, append a `✅ verified (N tests green)` note, update the **Current status** line, and commit the docs as `docs: mark Fx done …` alongside the code commit `Fx: <name> …`. A box becomes `[x]` only after you independently re-verified it green. This keeps `TODO.md` the trustworthy single source of progress for the next session.
 
 ## Key invariants & gotchas (so you don't re-derive them)
 - **Content-addressing is identity.** Unchanged files cost zero new bytes (hash-pointer reuse); changed large files re-store only changed FastCDC chunks. It is dedup-by-hash, **not** byte-diff/patch storage.

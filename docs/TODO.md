@@ -8,6 +8,7 @@
 - **C2 (no domino):** never change a frozen contract in place — grow it via a new impl behind the seam or a new versioned generation. See the Domino-Risk Register (plan §9, D-1…D-15) before touching anything foundational.
 - **C5 (evolution-safe):** every persisted struct carries a `schema_version` + a registered migration from its first commit.
 - Status: `[ ]` todo · `[~]` in progress · `[x]` done. Keep this file updated as the single source of progress.
+- **At the end of EVERY phase (required):** (1) re-verify yourself — run `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo fmt --all --check` from the repo root (prefix cargo with `export PATH="$HOME/.cargo/bin:$PATH"`); **do not trust an agent's self-report — they can be stale (e.g. fmt)**; (2) check off the phase's Build + DoD boxes and append a one-line `✅ verified (N tests green)` note to the phase; (3) update the **Current status** line below; (4) commit the code as `Fx: <name> …` and the doc update as `docs: mark Fx done …`. A box is only `[x]` once independently re-verified green.
 
 **Current status:** **F0 + F1 + F2 complete** — 13 crates, **396 tests green**, clippy/fmt clean, no stub markers. F0: content-addressing/dedup/canonical-identity. F1: hash-chained log + single writer actor + migration registry + rebuildable projection. F2: `NodeEnvelope` + `NodeTypeRegistry` + typed acyclic edges + `effective_status`, graph as a pure projection of the F1 log (drop-and-rebuild identical). Committed on `feat/f0-byte-identity`. Next: **F3 — Daemon/Renderer Seam, Security Boundary & Interactive Core**.
 
@@ -95,12 +96,14 @@ These are foundation infrastructure, not features — wired in behind frozen sea
 
 ---
 
-## F3 — Daemon/Renderer Seam, Security Boundary & Interactive Core
-**Goal:** Freeze the daemon/renderer split + security boundary, then ship the first interactive slice — **retire the untracked-mutation gap and the chat-only-restore trap here**. **Depends on:** F2. **Design:** §5.5, §6.4, §10.1–§10.4, §14.1, §14.3, §14.4, §15.1, §15.2, §15.4, A.1, A.3, A.6.
+## F3 — Daemon Seam, Security Boundary & Interactive Core (HEADLESS CORE)
+**Goal:** Freeze the daemon/renderer split + security boundary and ship the first interactive slice **driven by a headless client over the real IPC** — **retire the untracked-mutation gap and the chat-only-restore trap here**. **Depends on:** F2. **Design:** §5.5, §6.4, §10.1–§10.4, §14.1, §15.1, §15.2, §15.4, A.1, A.3, A.6.
 
-**Freeze before starting:** IPC command/event envelope + `opId`-returns-then-state-via-events · durable-on-ordered-stream vs ephemeral-on-side-channel split · capability vocabulary + versioned scope grammar + `AuditEntry`-per-call · `vaultRef` indirection (secrets resolved only in daemon, never hashed) · `AttributionRecord` schema + A.3 precedence · view-model layer isolating layout authority (Q8 deferrable).
+> **Scope note:** F3 is split. The **headless core** below is built + verified now (it is the daemon, IPC, security, drift, restore, and git boundary — all testable without a GUI). The **Tauri/React DAG canvas is split out as `F3-UI`** (next section) because a desktop/webview UI cannot be built or visually verified in a headless CLI sandbox. The IPC/event/capability/view-model contracts are frozen here, so `F3-UI` is purely additive whenever it lands (no rework).
 
-**Build:**
+**Freeze before starting:** IPC command/event envelope + `opId`-returns-then-state-via-events · durable-on-ordered-stream vs ephemeral-on-side-channel split · capability vocabulary + versioned scope grammar + `AuditEntry`-per-call · `vaultRef` indirection (secrets resolved only in daemon, never hashed) · `AttributionRecord` schema + A.3 precedence · **the view-model boundary the future renderer binds to (frozen now so F3-UI is additive)**.
+
+**Build (headless core):**
 - [ ] `crates/spork-ipc/` — tRPC-style command channel; mutations return `opId`, state arrives only via events (`node.create`/`node.restore`/`branch.fork`/`op.undo`/`op.redo`/`gc.run`)
 - [ ] `crates/spork-stream/` — dual channel: ordered op-log events + node-id-keyed ephemeral side-channels (chat tokens, stdout)
 - [ ] `crates/spork-broker/` — deny-by-default capability broker + versioned scope grammar; `AuditEntry` per call
@@ -108,18 +111,36 @@ These are foundation infrastructure, not features — wired in behind frozen sea
 - [ ] `crates/spork-drift/` — fused interceptor + FS watcher + reconciliation rescan + LSP-buffer bridge; versioned `AttributionRecord`
 - [ ] `crates/spork-restore/` — atomic dual-restore guard (single lock, fail-closed); metadata-only `branch.fork`
 - [ ] `crates/spork-git/` — non-invasive `GitContext`; `importGitState`/`exportToGit`; `.git` never touched
-- [ ] `app/` (Tauri/React) — daemon SoT → denormalized virtualized view-model → React Flow; ELK off-thread; lazy CAS diff
+- [ ] `crates/spork-daemon/` (or headless client bin) — wires the above behind one IPC surface; a headless client exercises the full flow end-to-end
 
-**Definition of Done:**
-- [ ] headless client and renderer drive the **same** IPC; mutations return `opId`, state arrives as events
+**Definition of Done (headless core):**
+- [ ] a **headless client** drives the IPC; mutations return `opId`, state arrives as events (the renderer's parity is an F3-UI item)
 - [ ] token-stream volume never stalls graph delivery
 - [ ] out-of-band `bash rm`/`mv`, external-editor save, and unsaved buffer each → correctly-attributed node within the debounce window
 - [ ] planted fake API key caught at capture, **never enters the CAS**
 - [ ] side effect without a capability → denied with an `AuditEntry`
 - [ ] restoring an old node restores code + bound conversation atomically, **fails closed** on injected divergence, forward history survives as a sibling
-- [ ] canvas **≥ 55 fps @ 1k nodes**, click→diff **p95 < 150 ms**, restore **p95 < 500 ms**
+- [ ] node restore **p95 < 500 ms**
 
-**Demoable:** open a repo, `rm` a file via raw bash → attributed drift node; click a past node → exact diff; restore (code + conversation), forward history survives as a branch; export to a clean Git commit while `.git` stays byte-unchanged.
+**Demoable (headless):** via a headless client — `rm` a file via raw bash → attributed drift node; fetch a past node's exact diff; restore (code + conversation), forward history survives as a branch; export to a clean Git commit while `.git` stays byte-unchanged.
+
+---
+
+## F3-UI — Tauri/React DAG Canvas (DEFERRED — needs a GUI environment)
+**Status:** **DEFERRED.** Not buildable/verifiable in a headless CLI sandbox (no display/webview). Binds only to the F3-frozen IPC + view-model contracts, so it is **purely additive — no rework** whenever it lands. **Design:** §14.1–§14.5, §15.1.
+
+**Pick-up trigger (when to build):** when **BOTH** hold — (1) a **GUI-capable dev environment** is available (display + Tauri toolchain + a human able to do visual/interaction verification), and (2) the headless backend is complete **through at least F4** (so the canvas has execution/result/provider/context state to surface). **Recommended slot:** right **after P5** (Four Built-In Node Types) so the first canvas renders real Edit/Validation/Stress/Sanity/Merge nodes — but it may be picked up any time after the F3 headless core since the IPC it binds to is frozen.
+
+**Build (when picked up):**
+- [ ] `app/` (Tauri shell, Rust core) — daemon source-of-truth → denormalized virtualized view-model → React Flow; ELK layout off-thread (Web Worker); lazy CAS diff in Monaco
+- [ ] five-region layout (top bar + model selector + toolbar; left navigator+legend; center DAG canvas; right Node-Details: chat+diff+results; bottom run rail)
+- [ ] op-log event reducer + optimistic UI w/ `opId` reconciliation; ephemeral side-channels for tokens/stdout
+- [ ] schema-driven node cards/details/legend off the `NodeTypeDescriptor`; sandboxed webview for custom UI contributions
+
+**Definition of Done (when picked up):**
+- [ ] renderer drives the **same** IPC as the headless client (parity)
+- [ ] canvas **≥ 55 fps @ 1k nodes**, click→diff **p95 < 150 ms**
+- [ ] click a node → exact state lazily from CAS; restore/branch from the canvas; layout positions stable as the graph grows
 
 ---
 
