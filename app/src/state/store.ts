@@ -100,7 +100,9 @@ function eventSubjectId(event: OpLogEvent): Ulid | null {
 const INITIAL = {
   view: EMPTY_VIEW,
   selectedNodeId: null as Ulid | null,
-  defaultModel: "claude-3-5-sonnet",
+  // The default model for new nodes; the top-bar selector defaults to this and
+  // it is one of TopBar's MODELS (DESIGN.md §14.2).
+  defaultModel: "claude-sonnet-4-6",
   pending: {} as Record<Ulid, PendingOp>,
   rail: {} as RunRail,
   lastSeq: 0,

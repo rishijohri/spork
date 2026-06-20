@@ -77,26 +77,26 @@ describe("NodeDetails", () => {
     expect(screen.getByText(EDIT)).toBeInTheDocument();
   });
 
-  it("enables Validate/Recalibrate on a snapshot-owning mutating node", () => {
+  it("enables Validate/Restore on a snapshot-owning mutating node", () => {
     useUiStore.getState().selectNode(EDIT);
     renderDetails();
     const validate = screen.getAllByRole("button", { name: "Validate" })[0];
-    const recalibrate = screen.getAllByRole("button", {
-      name: "Recalibrate",
+    const restore = screen.getAllByRole("button", {
+      name: "Restore",
     })[0];
     expect(validate).toBeEnabled();
-    expect(recalibrate).toBeEnabled();
+    expect(restore).toBeEnabled();
   });
 
-  it("disables Validate/Recalibrate on an observing node without a snapshot", () => {
+  it("disables Validate/Restore on an observing node without a snapshot", () => {
     useUiStore.getState().selectNode(CHECK);
     renderDetails();
     const validate = screen.getAllByRole("button", { name: "Validate" })[0];
-    const recalibrate = screen.getAllByRole("button", {
-      name: "Recalibrate",
+    const restore = screen.getAllByRole("button", {
+      name: "Restore",
     })[0];
     expect(validate).toBeDisabled();
-    expect(recalibrate).toBeDisabled();
+    expect(restore).toBeDisabled();
   });
 
   it("the diff tab requests changed paths and a blob via the mocked dispatch", async () => {

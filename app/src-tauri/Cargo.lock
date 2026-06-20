@@ -3215,6 +3215,7 @@ name = "spork-daemon"
 version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
+ "git2",
  "semver",
  "serde",
  "serde_json",

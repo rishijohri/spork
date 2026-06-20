@@ -19,11 +19,18 @@
 //! | [`Command::BlobRead`]    | `blob.read`    | read |
 //! | [`Command::NodeRunCheck`] | `node.runCheck` | mutation |
 //! | [`Command::BranchMerge`]  | `branch.merge`  | mutation |
+//! | [`Command::GitExport`]    | `git.export`    | action (inline) |
+//! | [`Command::GitPush`]      | `git.push`      | action (inline) |
 //!
-//! The last two are P5 additions (DESIGN.md §6.5, §8.1, §8.2): running an
-//! observing check against a node, and merging a branch via 3-way reconciliation.
-//! They are appended, not inserted, so the frozen wire form of the original
-//! variants is unchanged (CLAUDE.md C2/C3).
+//! `NodeRunCheck`/`BranchMerge` are P5 additions (DESIGN.md §6.5, §8.1, §8.2):
+//! running an observing check against a node, and merging a branch via 3-way
+//! reconciliation. `GitExport`/`GitPush` are the F3-UI git additions (DESIGN.md
+//! §10.4): they project / push a node's snapshot to a real Git branch. The git
+//! pair are **action-shaped**, not graph mutations — they change no work-DAG
+//! state, so they emit no [`OpLogEvent`](crate::OpLogEvent) and return their
+//! result inline as [`CommandResult::Git`](crate::CommandResult::Git). All four
+//! are appended, not inserted, so the frozen wire form of the original variants
+//! is unchanged (CLAUDE.md C2/C3).
 //!
 //! # The load-bearing rule (frozen here)
 //!
@@ -225,18 +232,54 @@ pub enum Command {
         /// without a contract change (CLAUDE.md C3).
         resolution: Option<serde_json::Value>,
     },
+
+    /// Export a node's snapshot to a real Git commit on a new branch (F3-UI
+    /// "Commit to GitHub", DESIGN.md §10.4). **Action-shaped, not a graph
+    /// mutation**: it does not change the work-DAG, so it emits no
+    /// [`OpLogEvent`](crate::OpLogEvent); it returns its result *inline* as
+    /// [`CommandResult::Git`](crate::CommandResult::Git). The non-invasive bridge
+    /// adds a new branch ref + objects to `.git` and never moves the user's
+    /// HEAD/index/working tree.
+    GitExport {
+        /// The snapshot-owning node whose tree to project into a Git commit.
+        node_id: Ulid,
+        /// The branch name to create, or `None` to default to `spork/<nodeId>`.
+        branch: Option<String>,
+    },
+
+    /// Push a node's exported branch to a Git remote (F3-UI "Push to GitHub",
+    /// DESIGN.md §10.4). **Action-shaped, not a graph mutation**: it emits no
+    /// [`OpLogEvent`](crate::OpLogEvent) and returns its result *inline* as
+    /// [`CommandResult::Git`](crate::CommandResult::Git). Shells the system `git`
+    /// so it uses the user's existing credentials; exports first if the branch is
+    /// not yet present.
+    GitPush {
+        /// The snapshot-owning node whose exported branch to push.
+        node_id: Ulid,
+        /// The remote to push to, or `None` to default to `origin`.
+        remote: Option<String>,
+    },
 }
 
 impl Command {
     /// Whether this command is a *mutation* (returns an `op_id` and emits
-    /// events) as opposed to a *read* (returns data inline, emits nothing).
+    /// events) as opposed to a *read* / *action* (returns data inline, emits
+    /// nothing). The reads ([`Command::NodeDiff`], [`Command::BlobRead`]) and the
+    /// action-shaped git commands ([`Command::GitExport`], [`Command::GitPush`])
+    /// are all non-mutations: they reply inline and never touch the event stream.
     ///
     /// This is the programmatic statement of the load-bearing rule, so a daemon
     /// or test can assert the right result/return shape per command without
     /// re-deriving the split by hand.
     #[must_use]
     pub fn is_mutation(&self) -> bool {
-        !matches!(self, Command::NodeDiff { .. } | Command::BlobRead { .. })
+        !matches!(
+            self,
+            Command::NodeDiff { .. }
+                | Command::BlobRead { .. }
+                | Command::GitExport { .. }
+                | Command::GitPush { .. }
+        )
     }
 }
 
@@ -306,9 +349,37 @@ mod tests {
         ]
     }
 
+    /// The F3-UI git actions: not graph mutations (they reply inline with a `Git`
+    /// result and emit no events), so they round-trip and classify with the reads.
+    fn sample_git_actions() -> Vec<Command> {
+        let a = Ulid::new();
+        vec![
+            Command::GitExport {
+                node_id: a,
+                branch: None,
+            },
+            Command::GitExport {
+                node_id: a,
+                branch: Some("feature/x".into()),
+            },
+            Command::GitPush {
+                node_id: a,
+                remote: None,
+            },
+            Command::GitPush {
+                node_id: a,
+                remote: Some("upstream".into()),
+            },
+        ]
+    }
+
     #[test]
     fn every_command_round_trips_through_json() {
-        for cmd in sample_mutations().into_iter().chain(sample_reads()) {
+        for cmd in sample_mutations()
+            .into_iter()
+            .chain(sample_reads())
+            .chain(sample_git_actions())
+        {
             let json = serde_json::to_string(&cmd).expect("serialize");
             let back: Command = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(cmd, back, "round-trip mismatch for {cmd:?}");
@@ -343,6 +414,32 @@ mod tests {
         for cmd in sample_reads() {
             assert!(!cmd.is_mutation(), "{cmd:?} should be a read");
         }
+        // The git actions are not graph mutations: they emit no events.
+        for cmd in sample_git_actions() {
+            assert!(!cmd.is_mutation(), "{cmd:?} should not be a mutation");
+        }
+    }
+
+    #[test]
+    fn git_commands_use_tagged_camel_case_wire_form() {
+        let node = Ulid::new();
+        let export = Command::GitExport {
+            node_id: node,
+            branch: None,
+        };
+        let v = serde_json::to_value(&export).unwrap();
+        assert_eq!(v["command"], "GIT_EXPORT");
+        assert_eq!(v["nodeId"], node.to_string());
+        assert!(v["branch"].is_null());
+
+        let push = Command::GitPush {
+            node_id: node,
+            remote: Some("origin".into()),
+        };
+        let pv = serde_json::to_value(&push).unwrap();
+        assert_eq!(pv["command"], "GIT_PUSH");
+        assert_eq!(pv["nodeId"], node.to_string());
+        assert_eq!(pv["remote"], "origin");
     }
 
     #[test]

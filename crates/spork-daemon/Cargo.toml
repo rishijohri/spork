@@ -52,6 +52,10 @@ crossbeam-channel = { workspace = true }
 # worktree, and a 3-way merge re-captures the reconciled tree from a scratch dir;
 # both create and drop a temp directory entirely inside the dispatch.
 tempfile = { workspace = true }
+# `git.push` re-uses an already-exported branch: the daemon reads the commit a
+# prior `git.export` left on `refs/heads/spork/<nodeId>` to report it back. Uses
+# the same vendored-libgit2 build as spork-git (no system libgit2).
+git2 = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

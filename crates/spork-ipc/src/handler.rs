@@ -82,6 +82,18 @@ mod tests {
                     reclaimable: vec![],
                     bytes: 0,
                 },
+                // The git actions → an inline `Git` result (branch/commit/pushed),
+                // not a graph mutation: they emit no event (DESIGN.md §10.4).
+                Command::GitExport { .. } => CommandResult::Git {
+                    branch: "spork/export".into(),
+                    commit_sha: "0".repeat(40),
+                    pushed: false,
+                },
+                Command::GitPush { .. } => CommandResult::Git {
+                    branch: "spork/export".into(),
+                    commit_sha: "0".repeat(40),
+                    pushed: true,
+                },
                 // Every other command → a mutation: only an op_id flows back.
                 _ => CommandResult::Mutation {
                     op_id: Ulid::new(),
@@ -162,10 +174,44 @@ mod tests {
                 from_node_id: Ulid::new(),
                 resolution: None,
             },
+            // The F3-UI git actions dispatch through the same seam and reply
+            // inline with a `Git` result (no event).
+            Command::GitExport {
+                node_id: Ulid::new(),
+                branch: None,
+            },
+            Command::GitPush {
+                node_id: Ulid::new(),
+                remote: Some("origin".into()),
+            },
         ];
         for cmd in cmds {
             let r = h.dispatch(cmd.clone()).unwrap();
             assert!(r.matches_command(&cmd), "result shape wrong for {cmd:?}");
         }
+    }
+
+    #[test]
+    fn git_actions_dispatch_to_inline_git_result() {
+        let h = ContractConformanceHandler;
+        let r = h
+            .dispatch(Command::GitExport {
+                node_id: Ulid::new(),
+                branch: None,
+            })
+            .unwrap();
+        assert!(
+            !r.is_mutation(),
+            "git export is action-shaped, not a mutation"
+        );
+        assert!(matches!(r, CommandResult::Git { pushed: false, .. }));
+
+        let r = h
+            .dispatch(Command::GitPush {
+                node_id: Ulid::new(),
+                remote: None,
+            })
+            .unwrap();
+        assert!(matches!(r, CommandResult::Git { pushed: true, .. }));
     }
 }

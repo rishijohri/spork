@@ -29,6 +29,10 @@
 //!   Spork node points at) into Git objects, commits over them with no ref
 //!   update, and creates a fresh branch ref. [`export_snapshot_to_git`] is the
 //!   convenience that resolves a [`spork_cas::Snapshot`] to its root tree first.
+//! - [`push_branch`] publishes an exported branch to a remote by shelling the
+//!   **system** `git` (`git -C <repo> push <remote> <branch>`), so the push uses
+//!   the user's existing credentials and Spork never holds a token. It is the
+//!   network half of the bridge and is additive over the read/export pair above.
 //!
 //! # Evolution safety (CLAUDE.md C5)
 //!
@@ -79,6 +83,58 @@ pub fn export_snapshot_to_git<S: StorageBackend + Sync>(
 ) -> Result<String, GitError> {
     let snap = store.read_snapshot(&snapshot)?;
     export_to_git(repo_path, store, snap.root_tree, branch_name)
+}
+
+/// Push an already-exported branch to a Git remote, using the **system** `git`.
+///
+/// This is the network half of the non-invasive bridge (DESIGN.md §10.4): after
+/// [`export_to_git`] creates `refs/heads/<branch>`, this shells out to
+/// `git -C <repo> push <remote> <branch>` so the push runs through the user's
+/// existing git configuration and credential helpers (SSH keys, the
+/// credential-manager, a `gh` auth helper, …) rather than Spork ever holding a
+/// token. It deliberately does **not** use the embedded libgit2 transport: that
+/// would require Spork to surface credentials, which violates the security
+/// boundary (the renderer/daemon hold zero secrets, CLAUDE.md §15.4).
+///
+/// The push only publishes the named branch; it never moves `HEAD`, never touches
+/// the index or working tree, and never force-pushes (no `--force`), so an
+/// existing remote branch is not clobbered — a non-fast-forward is surfaced as an
+/// error.
+///
+/// # Errors
+/// - [`GitError::Git`] if the `git push` exits non-zero (its stderr is preserved
+///   verbatim, including auth/non-fast-forward failures).
+/// - [`GitError::Io`] if the `git` binary cannot be launched (e.g. not on PATH).
+pub fn push_branch(
+    repo_path: impl AsRef<std::path::Path>,
+    remote: &str,
+    branch: &str,
+) -> Result<(), GitError> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo_path.as_ref())
+        .arg("push")
+        .arg(remote)
+        .arg(branch)
+        .output()
+        .map_err(|e| GitError::Io(format!("failed to launch `git push`: {e}")))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    // Preserve git's own diagnostic (auth failure, non-fast-forward, unknown
+    // remote, …) verbatim so nothing is silently swallowed.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let detail = if stderr.trim().is_empty() {
+        stdout.trim().to_string()
+    } else {
+        stderr.trim().to_string()
+    };
+    Err(GitError::Git(format!(
+        "git push {remote} {branch} failed: {detail}"
+    )))
 }
 
 #[cfg(test)]
@@ -615,6 +671,62 @@ mod tests {
             blob.as_blob().unwrap().content(),
             b"state owned by a graph node\n"
         );
+    }
+
+    #[test]
+    fn push_branch_lands_exported_ref_in_a_local_bare_remote() {
+        // No network: export a branch into a working repo, add a LOCAL bare repo
+        // as the remote, push, and assert the ref appears in the bare repo.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("repo");
+        init_committed_repo(&root);
+
+        // A bare repo on disk acts as the remote.
+        let bare = tmp.path().join("remote.git");
+        Repository::init_bare(&bare).unwrap();
+
+        // Wire the bare repo up as `origin`.
+        {
+            let repo = Repository::open(&root).unwrap();
+            repo.remote("origin", bare.to_str().unwrap()).unwrap();
+        }
+
+        // Export a node tree onto a new branch in the working repo.
+        let store_dir = TempDir::new().unwrap();
+        let store = cas(&store_dir);
+        let src = tmp.path().join("node_state");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("pushed.txt"), b"pushed by spork\n").unwrap();
+        let (node_tree, _stats) = store.put_tree(&src, &matcher()).unwrap();
+        let commit_sha = export_to_git(&root, &store, node_tree, "spork/pushed").unwrap();
+
+        // The bare remote has no such ref yet.
+        let remote = Repository::open_bare(&bare).unwrap();
+        assert!(remote.find_reference("refs/heads/spork/pushed").is_err());
+
+        // Push the exported branch through the system git.
+        push_branch(&root, "origin", "spork/pushed").unwrap();
+
+        // The ref now exists in the bare remote, pointing at the exported commit.
+        let remote = Repository::open_bare(&bare).unwrap();
+        let landed = remote
+            .find_reference("refs/heads/spork/pushed")
+            .expect("the pushed branch should exist on the remote")
+            .target()
+            .unwrap();
+        assert_eq!(landed, git2::Oid::from_str(&commit_sha).unwrap());
+    }
+
+    #[test]
+    fn push_branch_surfaces_an_unknown_remote_as_a_git_error() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("repo");
+        init_committed_repo(&root);
+
+        // Pushing to a remote that was never configured fails (no clobber, no
+        // panic) and the git diagnostic is preserved.
+        let err = push_branch(&root, "no-such-remote", "main").unwrap_err();
+        assert!(matches!(err, GitError::Git(_)), "got {err:?}");
     }
 
     #[test]

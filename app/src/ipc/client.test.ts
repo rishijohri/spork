@@ -1,7 +1,13 @@
 // IPC client tests (DESIGN.md §14.1, §14.4) — against the in-memory Tauri mock.
 
 import { describe, it, expect } from "vitest";
-import { dispatch, graphView, openProject, listenOpLog } from "./client";
+import {
+  dispatch,
+  graphView,
+  openProject,
+  listenOpLog,
+  isTauri,
+} from "./client";
 import {
   setMockGraphView,
   setDispatchReply,
@@ -27,7 +33,7 @@ function fixtureView(): GraphView {
         snapshotHash: "b3:deadbeef",
         branchId: "main",
         parentIds: [],
-        model: "claude-3-5-sonnet",
+        model: "claude-sonnet-4-6",
       },
     ],
     edges: [],
@@ -92,5 +98,38 @@ describe("ipc client", () => {
     unlisten();
     emitOpLogEvent({ type: "GC_PERFORMED", seq: 3 });
     expect(seen).toEqual([1, 2]); // no delivery after unlisten
+  });
+});
+
+describe("browser-mode fallback (no Tauri runtime)", () => {
+  it("detects no Tauri runtime in a plain browser / jsdom", () => {
+    // jsdom (like the Vite dev server's plain browser) injects no
+    // `window.__TAURI_INTERNALS__`, so the client routes to the in-memory mock.
+    expect(
+      (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__,
+    ).toBeUndefined();
+    expect(isTauri()).toBe(false);
+  });
+
+  it("listenOpLog does NOT throw without a Tauri runtime (it uses the mock)", async () => {
+    // The real Tauri `listen()` throws "Cannot read properties of undefined
+    // (reading 'transformCallback')" with no runtime; the mock path must not.
+    let unlisten: (() => void) | undefined;
+    await expect(
+      (async () => {
+        unlisten = await listenOpLog(() => {});
+      })(),
+    ).resolves.toBeUndefined();
+    expect(typeof unlisten).toBe("function");
+    unlisten?.();
+  });
+
+  it("dispatch routes through the mock with no Tauri runtime", async () => {
+    // A dispatch resolves against the in-memory mock rather than throwing.
+    const res = await dispatch({ command: "GC_RUN", dryRun: true });
+    expect(res.result).toBe("GC");
+    expect(getDispatchedCommands().some((c) => c.command === "GC_RUN")).toBe(
+      true,
+    );
   });
 });

@@ -49,6 +49,9 @@ pub const COMMAND_RESULT_SCHEMA_VERSION: u16 = 1;
 /// - [`CommandResult::Gc`] — the reply to [`Command::GcRun`] (the reclaimable
 ///   report; the durable effect, if any, still rides
 ///   [`OpLogEvent::GcPerformed`](crate::OpLogEvent::GcPerformed)).
+/// - [`CommandResult::Git`] — the reply to [`Command::GitExport`] /
+///   [`Command::GitPush`] (the resulting branch/commit/pushed triple; these are
+///   action-shaped and emit no event — DESIGN.md §10.4).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "result", rename_all = "SCREAMING_SNAKE_CASE")]
 #[serde(rename_all_fields = "camelCase")]
@@ -91,6 +94,23 @@ pub enum CommandResult {
         /// Total bytes reclaimable across `reclaimable`.
         bytes: u64,
     },
+
+    /// The reply to [`Command::GitExport`] / [`Command::GitPush`]: the git branch
+    /// the node's snapshot was projected onto, the resulting commit SHA, and
+    /// whether it was pushed to a remote (DESIGN.md §10.4).
+    ///
+    /// These are **action-shaped** results returned inline: the git operations
+    /// change no work-DAG state, so there is no [`OpLogEvent`](crate::OpLogEvent)
+    /// to reconcile against — the renderer just shows the resulting branch/commit.
+    /// `pushed` is `false` for a plain export and `true` once a push succeeds.
+    Git {
+        /// The branch the snapshot was exported to (e.g. `spork/<nodeId>`).
+        branch: String,
+        /// The exported commit's SHA-1 as a 40-char lowercase hex string.
+        commit_sha: String,
+        /// Whether the branch was pushed to a remote.
+        pushed: bool,
+    },
 }
 
 impl CommandResult {
@@ -130,6 +150,13 @@ impl CommandResult {
                 // contract models the report explicitly as the `Gc` variant.
                 matches!(self, CommandResult::Gc { .. })
             }
+            // The F3-UI git actions return their result inline as `Git`. They are
+            // not graph mutations (no `OpLogEvent` to reconcile): `GitExport`
+            // projects, `GitPush` projects-then-pushes, both reply with the
+            // branch/commit/pushed triple (DESIGN.md §10.4).
+            Command::GitExport { .. } | Command::GitPush { .. } => {
+                matches!(self, CommandResult::Git { .. })
+            }
             // Every other command is a pure mutation. This includes the P5
             // additions `NodeRunCheck` and `BranchMerge`: both return only an
             // `op_id`, with their durable effect arriving over the event stream
@@ -165,6 +192,16 @@ mod tests {
             CommandResult::Gc {
                 reclaimable: vec!["b3.1:dead".into()],
                 bytes: 4096,
+            },
+            CommandResult::Git {
+                branch: "spork/abc".into(),
+                commit_sha: "a".repeat(40),
+                pushed: false,
+            },
+            CommandResult::Git {
+                branch: "spork/abc".into(),
+                commit_sha: "b".repeat(40),
+                pushed: true,
             },
         ]
     }
@@ -279,5 +316,42 @@ mod tests {
             changed_paths: vec![]
         }
         .matches_command(&run_check));
+    }
+
+    #[test]
+    fn git_actions_reply_with_git_shape_inline() {
+        let node = Ulid::new();
+        let git = CommandResult::Git {
+            branch: "spork/x".into(),
+            commit_sha: "0".repeat(40),
+            pushed: true,
+        };
+        // The git result is action-shaped: it carries no op_id.
+        assert!(!git.is_mutation());
+        assert_eq!(git.op_id(), None);
+        // It is the valid reply shape for both git commands.
+        assert!(git.matches_command(&Command::GitExport {
+            node_id: node,
+            branch: None,
+        }));
+        assert!(git.matches_command(&Command::GitPush {
+            node_id: node,
+            remote: None,
+        }));
+        // A mutation shape is NOT a valid reply for a git command.
+        assert!(!CommandResult::Mutation {
+            op_id: Ulid::new(),
+            ids: serde_json::json!({}),
+        }
+        .matches_command(&Command::GitExport {
+            node_id: node,
+            branch: None,
+        }));
+
+        // Wire form: tagged "GIT", camelCase fields.
+        let v = serde_json::to_value(&git).unwrap();
+        assert_eq!(v["result"], "GIT");
+        assert_eq!(v["commitSha"], "0".repeat(40));
+        assert_eq!(v["pushed"], true);
     }
 }

@@ -1,18 +1,23 @@
 // Top-bar action toolbar (DESIGN.md §14.2, §14.5).
 //
-// The reference UI's toolbar: View, Analyze, Recalibrate, Validate, Create DT,
-// Submit DT, Create Process, Metadata. Each action declares `enabledWhen(node)`
-// so a node exposes only the actions valid for its kind/family — exactly the
-// schema-driven gating §14.5 requires. With no selection, only the
-// always-available actions (e.g. Create Process) are enabled.
+// Spork is a general codebase-editing IDE over a content-addressed work-DAG, so
+// the toolbar's actions are the operations you perform on a selected node of that
+// DAG: View, Analyze, Restore, Validate, New Branch, Commit to GitHub, Push to
+// GitHub, Metadata. Each action declares `enabledWhen(node)` so a node exposes
+// only the actions valid for its kind/family — exactly the schema-driven gating
+// §14.5 requires. With no selection, only the selection-independent actions are
+// enabled.
 //
-// Each MUTATING action also declares `buildCommand(node, ctx)`: the frozen
-// `spork_ipc::Command` it dispatches (A.1, src/ipc/types.ts). `runToolbarAction`
-// is the single wired path the panels call — it dispatches the command, registers
-// the returned `opId` as an optimistic op, and lets the op-log stream reconcile it
-// (the store's `ingestEvent` + `resolveOptimistic`, DESIGN.md §14.4). Read-only
-// actions (View / Analyze / Metadata) carry no command and are local-only UI
-// selections, so they never touch the daemon.
+// Each MUTATING / action command also declares `buildCommand(node, ctx)`: the
+// frozen `spork_ipc::Command` it dispatches (A.1, src/ipc/types.ts).
+// `runToolbarAction` is the single wired path the panels call — it dispatches the
+// command, and for a graph MUTATION registers the returned `opId` as an
+// optimistic op so the op-log stream reconciles it (the store's `ingestEvent` +
+// `resolveOptimistic`, DESIGN.md §14.4). The git actions (Commit/Push to GitHub)
+// are action-shaped: they reply inline with a `GIT` result and emit no op-log
+// event, so `runToolbarAction` returns `{opId:null}` for them. Read-only actions
+// (View / Analyze / Metadata) carry no command and are local-only UI selections,
+// so they never touch the daemon.
 
 import type { Command, NodeView, Ulid } from "../ipc/types";
 import { dispatch } from "../ipc/client";
@@ -59,12 +64,13 @@ export const TOOLBAR_ACTIONS: readonly ToolbarAction[] = [
     enabledWhen: hasSelection,
     buildCommand: () => null,
   },
-  // Recalibrate — only meaningful on a mutating, snapshot-owning node. Restores
-  // the node's snapshot+conversation (A.1 `node.restore`) as the recalibration
-  // baseline (DESIGN.md §6.4 — restore is an event, never an overwrite).
+  // Restore — only meaningful on a mutating, snapshot-owning node. Restores the
+  // node's snapshot+conversation (A.1 `node.restore`), bringing the working tree
+  // back to that node's state (DESIGN.md §6.4 — restore is an event, never an
+  // overwrite; forward history survives as a branch).
   {
-    id: "recalibrate",
-    label: "Recalibrate",
+    id: "restore",
+    label: "Restore",
     enabledWhen: (n) => isMaterializable(n) && n.family === "mutating",
     buildCommand: (n) =>
       n ? { command: "NODE_RESTORE", nodeId: n.id } : null,
@@ -84,48 +90,38 @@ export const TOOLBAR_ACTIONS: readonly ToolbarAction[] = [
           }
         : null,
   },
-  // Create DT (decision/diff transaction) — fork a working branch off the
-  // selected node to stage the transaction (A.1 `branch.fork`).
+  // New Branch — fork a new branch off the selected node so you can explore an
+  // alternative line of work from that point (A.1 `branch.fork`; metadata-only,
+  // zero bytes copied, DESIGN.md §6.3). Available on any selection.
   {
-    id: "createDt",
-    label: "Create DT",
-    enabledWhen: hasSelection,
-    buildCommand: (n) =>
-      n ? { command: "BRANCH_FORK", fromNodeId: n.id, name: `dt/${n.id}` } : null,
-  },
-  // Submit DT — merge the DT branch back into the selected node's branch
-  // (A.1 `branch.merge`; a clean merge or a conflictSet, DESIGN.md §6.6).
-  {
-    id: "submitDt",
-    label: "Submit DT",
+    id: "newBranch",
+    label: "New Branch",
     enabledWhen: hasSelection,
     buildCommand: (n) =>
       n
-        ? {
-            command: "BRANCH_MERGE",
-            intoRef: n.branchId,
-            fromNodeId: n.id,
-            resolution: null,
-          }
+        ? { command: "BRANCH_FORK", fromNodeId: n.id, name: `branch/${n.id}` }
         : null,
   },
-  // Create Process — always available: start a new root flow with a fresh
-  // snapshot node on `main`, authored against the top-bar default model
-  // (A.1 `node.create`). The model rides the payload (the registry validates it).
+  // Commit to GitHub — project the selected node's snapshot into a real Git
+  // commit on a new branch (A.1 `git.export`, DESIGN.md §10.4). Needs a snapshot
+  // to commit, so it gates on `isMaterializable`. Action-shaped: replies inline
+  // with a `GIT` result and emits no op-log event.
   {
-    id: "createProcess",
-    label: "Create Process",
-    enabledWhen: () => true,
-    buildCommand: (n, ctx) => ({
-      command: "NODE_CREATE",
-      kind: "snapshot",
-      typeVersion: "1.0.0",
-      parentIds: n ? [n.id] : [],
-      branchId: n?.branchId ?? "main",
-      payload: { origin: "manual", model: ctx.defaultModel },
-      ownsSnapshot: false,
-      snapshotHash: null,
-    }),
+    id: "gitExport",
+    label: "Commit to GitHub",
+    enabledWhen: isMaterializable,
+    buildCommand: (n) =>
+      n ? { command: "GIT_EXPORT", nodeId: n.id, branch: null } : null,
+  },
+  // Push to GitHub — export (if needed) then push the node's branch to a remote
+  // using the user's existing git credentials (A.1 `git.push`, DESIGN.md §10.4).
+  // Needs a snapshot to push, so it gates on `isMaterializable`. Action-shaped.
+  {
+    id: "gitPush",
+    label: "Push to GitHub",
+    enabledWhen: isMaterializable,
+    buildCommand: (n) =>
+      n ? { command: "GIT_PUSH", nodeId: n.id, remote: null } : null,
   },
   // Metadata — inspect/edit metadata of any selected node. Local-only (the
   // details panel surfaces it); no daemon mutation.

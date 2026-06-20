@@ -116,7 +116,13 @@ export type Command =
       intoRef: string;
       fromNodeId: Ulid;
       resolution: unknown | null;
-    };
+    }
+  // The F3-UI git actions (DESIGN.md §10.4). Action-shaped, NOT graph mutations:
+  // they reply inline with a `Git` CommandResult and emit no OpLogEvent. Field
+  // casing matches the Rust serde `rename_all_fields = "camelCase"` (nodeId,
+  // branch / nodeId, remote); the `Option<String>` fields are `string | null`.
+  | { command: "GIT_EXPORT"; nodeId: Ulid; branch: string | null }
+  | { command: "GIT_PUSH"; nodeId: Ulid; remote: string | null };
 
 /** The command tag literal type, for exhaustive switching. */
 export type CommandTag = Command["command"];
@@ -128,7 +134,12 @@ export type CommandResult =
   | { result: "MUTATION"; opId: Ulid; ids: Record<string, unknown> }
   | { result: "DIFF"; changedPaths: string[] }
   | { result: "BLOB"; bytes: number[] }
-  | { result: "GC"; reclaimable: string[]; bytes: number };
+  | { result: "GC"; reclaimable: string[]; bytes: number }
+  // The reply to GIT_EXPORT / GIT_PUSH (DESIGN.md §10.4). Returned inline (these
+  // are action-shaped, not mutations): the branch the snapshot was projected to,
+  // the commit SHA, and whether it was pushed. Field casing matches the Rust
+  // serde `rename_all_fields = "camelCase"` (commitSha).
+  | { result: "GIT"; branch: string; commitSha: string; pushed: boolean };
 
 // --- Op-log events (crates/spork-ipc/src/event.rs) ----------------------------
 //

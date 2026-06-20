@@ -144,7 +144,9 @@ These are foundation infrastructure, not features — wired in behind frozen sea
 - [~] canvas **≥ 55 fps @ 1k nodes**, click→diff **p95 < 150 ms** — **needs a display; USER to verify** (`npm run tauri:dev`)
 - [~] click a node → exact state from CAS; restore/branch from the canvas; stable layout — wired + component-tested with mocked Tauri; **full visual/interaction pass is the USER's** UX testing
 
-> **To run/verify the UI (needs a display):** `cd app && npm install && npm run tauri:dev` (or VS Code "Tauri Development Debug"). `app/scripts/check.sh` runs the full no-display green bar.
+> **To run/verify the UI:** full desktop app → `cd app && npm install && npm run tauri:dev` (or VS Code "Tauri Development Debug"). **Quick browser preview → `cd app && npm run dev` → http://localhost:1420** — runs in **browser-mock mode** (no Tauri runtime; client falls back to the in-memory mock seeded with a demo DAG) so the layout/toolbar/canvas are testable without a display. `app/scripts/check.sh` runs the full no-display green bar.
+>
+> **Toolbar revised to Spork actions** (the reference-image jargon was replaced): View · Analyze · Restore · Validate · New Branch · Commit to GitHub (`GIT_EXPORT`) · Push to GitHub (`GIT_PUSH`) · Metadata. Backend git commands added additively (`spork-ipc` `GitExport`/`GitPush`, `spork-git::push_branch`, daemon dispatch).
 
 ---
 

@@ -68,8 +68,9 @@ describe("Shell end-to-end-ish flow (mocked Tauri)", () => {
   it("a dispatched mutation updates the view via a replayed op-log event", async () => {
     setMockGraphView(seedView());
     // The mutation replies with only a correlation opId + the minted nodeId —
-    // never the new graph state. The minted id is the reconciliation key.
-    setDispatchReply("NODE_CREATE", {
+    // never the new graph state. The minted id is the reconciliation key. We use
+    // Validate (NODE_RUN_CHECK), which mints the new observing-result node id.
+    setDispatchReply("NODE_RUN_CHECK", {
       result: "MUTATION",
       opId: OP,
       ids: { nodeId: CREATED },
@@ -86,21 +87,28 @@ describe("Shell end-to-end-ish flow (mocked Tauri)", () => {
     });
     expect(useUiStore.getState().view.nodes).toHaveLength(1);
 
-    // Dispatch a mutation from the wired top-bar toolbar (Create Process).
-    fireEvent.click(screen.getByRole("button", { name: "Create Process" }));
+    // Select the root node, then dispatch a mutation from the wired top-bar
+    // toolbar (Validate runs an observing check against the selection).
+    act(() => {
+      useUiStore.getState().selectNode(ROOT);
+    });
+    // Both the top bar and the node-details panel render the toolbar, so there
+    // are two "Validate" buttons once a node is selected; drive the first.
+    const validateBtn = screen.getAllByRole("button", { name: "Validate" })[0]!;
+    fireEvent.click(validateBtn);
 
-    // The frozen NODE_CREATE command reached the daemon, and its returned opId
+    // The frozen NODE_RUN_CHECK command reached the daemon, and its returned opId
     // is registered as an in-flight optimistic op (DESIGN.md §14.4).
     await waitFor(() => {
       expect(
-        getDispatchedCommands().some((c) => c.command === "NODE_CREATE"),
+        getDispatchedCommands().some((c) => c.command === "NODE_RUN_CHECK"),
       ).toBe(true);
       expect(useUiStore.getState().pending[OP]).toBeDefined();
     });
     // The button's in-flight state settles back.
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "Create Process" }),
+        screen.getAllByRole("button", { name: "Validate" })[0],
       ).toBeEnabled(),
     );
 

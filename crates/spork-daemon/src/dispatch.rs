@@ -84,6 +84,8 @@ impl Daemon {
                 from_node_id,
                 resolution,
             } => self.cmd_branch_merge(&into_ref, from_node_id, resolution),
+            Command::GitExport { node_id, branch } => self.cmd_git_export(node_id, branch),
+            Command::GitPush { node_id, remote } => self.cmd_git_push(node_id, remote),
         }
     }
 
@@ -363,6 +365,135 @@ impl Daemon {
         Ok(CommandResult::Blob { bytes })
     }
 
+    /// `git.export` (action): project a node's snapshot into a real Git commit on
+    /// a new branch, returning the branch/commit inline as
+    /// [`CommandResult::Git`] (DESIGN.md §10.4).
+    ///
+    /// This is **not** a graph mutation: the export adds a branch ref + immutable
+    /// objects to the user's `.git` but changes no Spork work-DAG state, so it
+    /// emits no [`OpLogEvent`] and returns its result inline (the load-bearing
+    /// rule's read/action side). It authorizes [`Capability::SnapshotRead`] (it
+    /// reads the node's snapshot tree from the CAS), resolves the node, requires
+    /// it owns a snapshot, and exports to `branch` (defaulting to
+    /// `spork/<nodeId>`). The repo is the daemon's working tree (where the user's
+    /// `.git` lives); the bridge leaves HEAD/index/working tree byte-unchanged.
+    fn cmd_git_export(
+        &self,
+        node_id: Ulid,
+        branch: Option<String>,
+    ) -> Result<CommandResult, DaemonError> {
+        self.authorize(
+            Capability::SnapshotRead,
+            &RequestedScope::path(WORKTREE_GLOB),
+        )?;
+        let branch = branch.unwrap_or_else(|| default_export_branch(node_id));
+        let commit_sha = self.git_export_branch(node_id, &branch)?;
+        Ok(CommandResult::Git {
+            branch,
+            commit_sha,
+            pushed: false,
+        })
+    }
+
+    /// `git.push` (action): export the node's snapshot to a branch if needed, then
+    /// push that branch to a remote through the system `git`, returning the
+    /// branch/commit inline with `pushed = true` (DESIGN.md §10.4).
+    ///
+    /// This is **not** a graph mutation (no [`OpLogEvent`]). It authorizes
+    /// [`Capability::NetConnect`] — pushing reaches the network — *and* exports
+    /// first (which itself reads the snapshot), so the push always has a branch to
+    /// publish. The push shells the user's `git` so it uses their existing
+    /// credentials (Spork holds no token, DESIGN.md §15.4). `remote` defaults to
+    /// `origin`.
+    fn cmd_git_push(
+        &self,
+        node_id: Ulid,
+        remote: Option<String>,
+    ) -> Result<CommandResult, DaemonError> {
+        let remote = remote.unwrap_or_else(|| "origin".to_string());
+        let branch = default_export_branch(node_id);
+
+        // A push reaches the network. `net.connect` is host-scoped, so resolve the
+        // concrete host from the remote's URL and authorize against it — the
+        // broker enforces the per-host allowlist (DESIGN.md §15.1, §15.2).
+        let host = self.git_remote_host(&remote)?;
+        self.authorize(Capability::NetConnect, &RequestedScope::host(host))?;
+
+        // Export the branch first so there is always something to push. A repeat
+        // export onto an existing branch name fails in the non-invasive bridge;
+        // treat that as "already exported" and push the existing branch.
+        let commit_sha = match self.git_export_branch(node_id, &branch) {
+            Ok(sha) => sha,
+            Err(DaemonError::Git(_)) => self.git_branch_commit_sha(&branch)?,
+            Err(e) => return Err(e),
+        };
+
+        let workdir = self.workdir();
+        spork_git::push_branch(&workdir, &remote, &branch)
+            .map_err(|e| DaemonError::Git(e.to_string()))?;
+
+        Ok(CommandResult::Git {
+            branch,
+            commit_sha,
+            pushed: true,
+        })
+    }
+
+    /// Resolve a node to its snapshot tree and export it to `branch`, returning the
+    /// new commit SHA. Shared by [`cmd_git_export`](Self::cmd_git_export) and
+    /// [`cmd_git_push`](Self::cmd_git_push). Holds the core lock for the CAS read
+    /// + git write, exactly like the other snapshot-reading dispatch arms.
+    fn git_export_branch(&self, node_id: Ulid, branch: &str) -> Result<String, DaemonError> {
+        let core = self.core.lock().expect("daemon core mutex poisoned");
+        let env = core
+            .graph
+            .get_node(node_id)
+            .map_err(|e| DaemonError::Graph(e.to_string()))?
+            .ok_or_else(|| DaemonError::NotFound(format!("node {node_id}")))?;
+        let snapshot_hash = env
+            .snapshot_hash
+            .ok_or_else(|| DaemonError::NotFound(format!("node {node_id} owns no snapshot")))?;
+        spork_git::export_snapshot_to_git(&core.workdir, &core.store, snapshot_hash, branch)
+            .map_err(|e| DaemonError::Git(e.to_string()))
+    }
+
+    /// Read the commit SHA an already-exported `branch` points at (for a push that
+    /// re-uses a branch a prior export created). Uses the daemon's working tree as
+    /// the repo.
+    fn git_branch_commit_sha(&self, branch: &str) -> Result<String, DaemonError> {
+        let workdir = self.workdir();
+        let repo = git2::Repository::open(&workdir)
+            .map_err(|e| DaemonError::Git(format!("open repo {workdir:?}: {e}")))?;
+        let reference = repo
+            .find_reference(&format!("refs/heads/{branch}"))
+            .map_err(|e| DaemonError::Git(format!("find branch {branch}: {e}")))?;
+        let commit = reference
+            .peel_to_commit()
+            .map_err(|e| DaemonError::Git(format!("peel branch {branch}: {e}")))?;
+        Ok(commit.id().to_string())
+    }
+
+    /// Resolve the network host a `git push` to `remote` will reach, for the
+    /// host-scoped `net.connect` authorization.
+    ///
+    /// Reads the remote's configured URL from the daemon's working-tree repo and
+    /// extracts its host. A local/file remote (e.g. a `file://` path or a bare
+    /// repo on disk, as the tests use) has no network host, so it resolves to
+    /// `"localhost"` — the broker still gates it, just against the local host. An
+    /// unknown remote is a [`DaemonError::Git`].
+    fn git_remote_host(&self, remote: &str) -> Result<String, DaemonError> {
+        let workdir = self.workdir();
+        let repo = git2::Repository::open(&workdir)
+            .map_err(|e| DaemonError::Git(format!("open repo {workdir:?}: {e}")))?;
+        let found = repo
+            .find_remote(remote)
+            .map_err(|e| DaemonError::Git(format!("find remote {remote:?}: {e}")))?;
+        let url = found
+            .url()
+            .map_err(|e| DaemonError::Git(format!("remote {remote:?} url: {e}")))?;
+        Ok(remote_url_host(url))
+    }
+
     /// Mint a fresh `op_id`, record it on the undo/redo cursor, and wrap it (with
     /// the given minted-id bag) as a [`CommandResult::Mutation`].
     ///
@@ -383,4 +514,91 @@ impl Daemon {
 fn parse_version(s: &str) -> Result<semver::Version, DaemonError> {
     semver::Version::parse(s)
         .map_err(|e| DaemonError::Graph(format!("invalid type_version {s:?}: {e}")))
+}
+
+/// The default git branch name a node's snapshot exports to: `spork/<nodeId>`.
+///
+/// Both `git.export` (when `branch` is `None`) and `git.push` use this, so a push
+/// publishes the same branch a prior bare export created (DESIGN.md §10.4).
+fn default_export_branch(node_id: Ulid) -> String {
+    format!("spork/{node_id}")
+}
+
+/// Extract the network host from a git remote URL for `net.connect` scoping.
+///
+/// Handles the common forms:
+/// - `https://github.com/owner/repo.git` → `github.com`
+/// - `ssh://git@github.com:22/owner/repo.git` → `github.com`
+/// - the scp-style `git@github.com:owner/repo.git` → `github.com`
+/// - a local/file remote (`/path/to/repo.git`, `file:///path`, `../repo`) → has
+///   no network host, so it resolves to `localhost`.
+fn remote_url_host(url: &str) -> String {
+    const LOCAL: &str = "localhost";
+
+    // A local file path or explicit file:// URL is not a network host.
+    if url.starts_with("file://") || url.starts_with('/') || url.starts_with('.') {
+        return LOCAL.to_string();
+    }
+
+    // scheme://[user@]host[:port]/path
+    if let Some((_scheme, rest)) = url.split_once("://") {
+        let authority = rest.split('/').next().unwrap_or(rest);
+        let after_user = authority.rsplit('@').next().unwrap_or(authority);
+        let host = after_user.split(':').next().unwrap_or(after_user);
+        return if host.is_empty() {
+            LOCAL.to_string()
+        } else {
+            host.to_string()
+        };
+    }
+
+    // scp-style: [user@]host:path (the colon separates host from path).
+    if let Some((before_colon, _path)) = url.split_once(':') {
+        let host = before_colon.rsplit('@').next().unwrap_or(before_colon);
+        if !host.is_empty() {
+            return host.to_string();
+        }
+    }
+
+    LOCAL.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{default_export_branch, remote_url_host};
+    use ulid::Ulid;
+
+    #[test]
+    fn default_export_branch_is_spork_prefixed() {
+        let id = Ulid::new();
+        assert_eq!(default_export_branch(id), format!("spork/{id}"));
+    }
+
+    #[test]
+    fn remote_url_host_extracts_the_network_host() {
+        assert_eq!(
+            remote_url_host("https://github.com/owner/repo.git"),
+            "github.com"
+        );
+        assert_eq!(
+            remote_url_host("https://user@gitlab.com:443/owner/repo.git"),
+            "gitlab.com"
+        );
+        assert_eq!(
+            remote_url_host("ssh://git@github.com:22/owner/repo.git"),
+            "github.com"
+        );
+        // scp-style.
+        assert_eq!(
+            remote_url_host("git@github.com:owner/repo.git"),
+            "github.com"
+        );
+    }
+
+    #[test]
+    fn remote_url_host_maps_local_remotes_to_localhost() {
+        assert_eq!(remote_url_host("/srv/git/repo.git"), "localhost");
+        assert_eq!(remote_url_host("file:///srv/git/repo.git"), "localhost");
+        assert_eq!(remote_url_host("../sibling/repo.git"), "localhost");
+    }
 }

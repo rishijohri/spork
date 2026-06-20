@@ -1,11 +1,23 @@
-// In-memory Tauri mock for tests (DESIGN.md §14.4–§14.5).
+// In-memory Tauri mock (DESIGN.md §14.4–§14.5).
 //
-// There is no Tauri runtime under Vitest, so `@tauri-apps/api/core::invoke` and
-// `@tauri-apps/api/event::listen` are replaced (in src/test/setup.ts) by the
-// `mockInvoke` / `mockListen` here. A test seeds a fixture GraphView + canned
-// command replies, then drives the UI; to exercise the reducer/optimistic path
-// it calls `emitOpLogEvent` / `emitEphemeral` to replay events the real backend
-// would forward over the window channels.
+// Two consumers share this one in-memory backend:
+//
+//   1. TESTS. There is no Tauri runtime under Vitest, so
+//      `@tauri-apps/api/core::invoke` and `@tauri-apps/api/event::listen` are
+//      replaced (in src/test/setup.ts) by the `mockInvoke` / `mockListen` here. A
+//      test seeds a fixture GraphView + canned command replies, then drives the
+//      UI; to exercise the reducer/optimistic path it calls `emitOpLogEvent` /
+//      `emitEphemeral` to replay events the real backend would forward.
+//
+//   2. BROWSER MOCK MODE. A plain browser (the Vite dev server at
+//      localhost:1420) has no Tauri runtime, so `src/ipc/client.ts` routes every
+//      call here instead of `invoke`/`listen` (so the app runs fully, no throw).
+//      In that mode `seedDemoGraph()` seeds a small demo DAG so the canvas
+//      renders, and `autoEmit` is turned on so a `dispatch` mutation also EMITS
+//      its plausible op-log event(s) — exactly what the real daemon forwards —
+//      so the reducer folds them, the canvas updates, and the optimistic op
+//      reconciles. Tests leave `autoEmit` off (they replay events explicitly),
+//      so their behavior is unchanged.
 //
 // This is the mockable IPC the spec requires: it returns fixture graph views and
 // replays events with no real daemon and no display.
@@ -13,10 +25,13 @@
 import type {
   Command,
   CommandResult,
+  EdgeType,
   EphemeralFrame,
   GraphView,
+  NodeView,
   OpLogEvent,
   TauriEvent,
+  Ulid,
 } from "./types";
 import { OPLOG_EVENT, EPHEMERAL_EVENT } from "./types";
 
@@ -40,6 +55,15 @@ interface MockState {
   listeners: Map<string, Set<Listener<unknown>>>;
   /** Monotonic id handed to each listener (mirrors Tauri's listener id). */
   nextListenerId: number;
+  /**
+   * Browser-mock-mode flag: when true, a `dispatch` mutation also emits its
+   * plausible op-log event(s) onto the listeners so the reducer + optimistic UI
+   * advance with no real daemon. Tests leave this `false` (they replay events
+   * explicitly via `emitOpLogEvent`) so their behavior is unchanged.
+   */
+  autoEmit: boolean;
+  /** A monotonic `seq` for auto-emitted op-log events (browser mode). */
+  nextSeq: number;
 }
 
 const EMPTY_GRAPH: GraphView = {
@@ -58,6 +82,8 @@ function freshState(): MockState {
     defaultDispatchReply: (cmd) => defaultReplyFor(cmd),
     listeners: new Map(),
     nextListenerId: 1,
+    autoEmit: false,
+    nextSeq: 1,
   };
 }
 
@@ -72,10 +98,149 @@ function defaultReplyFor(cmd: Command): CommandResult {
       return { result: "BLOB", bytes: [] };
     case "GC_RUN":
       return { result: "GC", reclaimable: [], bytes: 0 };
+    case "GIT_EXPORT":
+      // Action-shaped: an inline `Git` reply, no events (DESIGN.md §10.4).
+      return {
+        result: "GIT",
+        branch: `spork/${cmd.nodeId}`,
+        commitSha: fakeSha(),
+        pushed: false,
+      };
+    case "GIT_PUSH":
+      return {
+        result: "GIT",
+        branch: `spork/${cmd.nodeId}`,
+        commitSha: fakeSha(),
+        pushed: true,
+      };
     default:
-      // Every other command is a mutation: reply with an op_id + empty ids.
-      return { result: "MUTATION", opId: fakeUlid(), ids: {} };
+      // Every other command is a mutation: reply with an op_id + minted ids.
+      return { result: "MUTATION", opId: fakeUlid(), ids: mintedIdsFor(cmd) };
   }
+}
+
+/**
+ * The freshly-minted ids a mutation reply carries, so the optimistic-UI
+ * reconciliation has a subject id to match a tailing op-log event against. A node
+ * mutation mints a `nodeId`; a ref mutation mints a `refId`. The same minted id
+ * is reused by the auto-emitted event in browser mode (see `autoEmitFor`).
+ */
+function mintedIdsFor(cmd: Command): Record<string, unknown> {
+  switch (cmd.command) {
+    case "NODE_CREATE":
+    case "NODE_RESTORE":
+    case "NODE_RUN_CHECK":
+    case "BRANCH_MERGE":
+      return { nodeId: fakeUlid() };
+    case "BRANCH_FORK":
+      return { refId: cmd.name };
+    case "REF_CREATE":
+    case "REF_MOVE":
+      return { refId: cmd.name };
+    default:
+      return {};
+  }
+}
+
+/**
+ * The op-log events the real daemon would forward for a mutation, reusing the
+ * reply's minted subject id so the reducer folds the right node/ref and the
+ * optimistic op reconciles. Returns `[]` for reads and the action-shaped git
+ * commands (which emit nothing). Browser-mock-mode only.
+ */
+function autoEmitFor(cmd: Command, reply: CommandResult): OpLogEvent[] {
+  if (reply.result !== "MUTATION") return [];
+  const ids = reply.ids;
+  const nodeId =
+    typeof ids["nodeId"] === "string" ? (ids["nodeId"] as Ulid) : null;
+  const refId =
+    typeof ids["refId"] === "string" ? (ids["refId"] as Ulid) : null;
+
+  const events: OpLogEvent[] = [];
+  const seq = () => state.nextSeq++;
+  switch (cmd.command) {
+    case "NODE_CREATE":
+      if (nodeId) {
+        events.push({
+          type: "NODE_CREATED",
+          seq: seq(),
+          nodeId,
+          schemaVersion: 1,
+        });
+        for (const parent of cmd.parentIds) {
+          events.push({
+            type: "EDGE_ADDED",
+            seq: seq(),
+            from: parent,
+            to: nodeId,
+            edge: "PARENT_CHILD",
+          });
+        }
+      }
+      break;
+    case "NODE_RESTORE":
+      events.push({
+        type: "RESTORE_PERFORMED",
+        seq: seq(),
+        nodeId: cmd.nodeId,
+      });
+      events.push({
+        type: "REF_MOVED",
+        seq: seq(),
+        ref: "HEAD",
+        to: cmd.nodeId,
+      });
+      break;
+    case "BRANCH_FORK":
+      if (refId) {
+        events.push({ type: "BRANCH_FORKED", seq: seq(), ref: refId });
+        events.push({ type: "REF_CREATED", seq: seq(), ref: refId });
+      }
+      break;
+    case "REF_CREATE":
+      if (refId) events.push({ type: "REF_CREATED", seq: seq(), ref: refId });
+      break;
+    case "REF_MOVE":
+      if (refId)
+        events.push({
+          type: "REF_MOVED",
+          seq: seq(),
+          ref: refId,
+          to: cmd.to,
+        });
+      break;
+    case "NODE_RUN_CHECK":
+      if (nodeId) {
+        const edge: EdgeType = "VALIDATES";
+        events.push({
+          type: "EDGE_ADDED",
+          seq: seq(),
+          from: cmd.targetNodeId,
+          to: nodeId,
+          edge,
+        });
+        events.push({
+          type: "RESULT_RECORDED",
+          seq: seq(),
+          runId: fakeUlid(),
+          nodeId,
+        });
+      }
+      break;
+    case "BRANCH_MERGE":
+      if (nodeId)
+        events.push({ type: "MERGE_PERFORMED", seq: seq(), nodeId });
+      break;
+    case "OP_UNDO":
+      events.push({ type: "OP_UNDONE", seq: seq() });
+      break;
+    case "OP_REDO":
+      events.push({ type: "OP_REDONE", seq: seq() });
+      break;
+    default:
+      break;
+  }
+  return events;
 }
 
 let ulidCounter = 0;
@@ -85,10 +250,18 @@ export function fakeUlid(): string {
   return ulidCounter.toString(36).toUpperCase().padStart(26, "0");
 }
 
+let shaCounter = 0;
+/** A deterministic fake 40-hex commit SHA for the `Git` result. */
+export function fakeSha(): string {
+  shaCounter += 1;
+  return shaCounter.toString(16).padStart(40, "0");
+}
+
 /** Reset all mock state (called from `beforeEach`). */
 export function resetTauriMock(): void {
   state = freshState();
   ulidCounter = 0;
+  shaCounter = 0;
 }
 
 /** Seed the GraphView returned by the `graph_view` command. */
@@ -114,6 +287,11 @@ export function getOpenedProjects(): readonly string[] {
   return state.openedProjects;
 }
 
+/** Whether the mock is in browser-mock auto-emit mode. */
+export function isAutoEmit(): boolean {
+  return state.autoEmit;
+}
+
 /** Replay an op-log event onto every `oplog-event` listener. */
 export function emitOpLogEvent(event: OpLogEvent): void {
   deliver(OPLOG_EVENT, event);
@@ -128,9 +306,101 @@ function deliver<T>(eventName: string, payload: T): void {
   const set = state.listeners.get(eventName);
   if (!set) return;
   const id = state.nextListenerId;
-  for (const l of set) {
+  // Copy the set first: a handler may unlisten (mutating the set) while we
+  // iterate, which would otherwise throw / skip.
+  for (const l of [...set]) {
     (l as Listener<T>).handler({ event: eventName, id, payload });
   }
+}
+
+// --- The demo DAG (browser mock mode) ----------------------------------------
+
+const DEMO_ROOT = "01DEMO00000000000000000ROOT";
+const DEMO_EDIT = "01DEMO00000000000000000EDIT";
+const DEMO_VALD = "01DEMO000000000000000VALIDAT";
+const DEMO_SNAP = "01DEMO00000000000000000SNAP2";
+
+function demoNode(
+  id: Ulid,
+  kind: string,
+  family: NodeView["family"],
+  status: NodeView["status"],
+  ownsSnapshot: boolean,
+  parentIds: Ulid[],
+  model: string | null,
+): NodeView {
+  return {
+    id,
+    kind,
+    family,
+    status,
+    isStale: false,
+    ownsSnapshot,
+    snapshotHash: ownsSnapshot ? `b3:${id.slice(0, 8)}` : null,
+    branchId: "main",
+    parentIds,
+    model,
+  };
+}
+
+/**
+ * A small demo DAG so the canvas renders something at localhost:1420: a root
+ * snapshot, a mutating Edit child, an observing Validation off the Edit, and a
+ * second Snapshot child — with parent/child edges, a VALIDATES edge, and a couple
+ * of refs (HEAD + a branch). Used only in browser mock mode.
+ */
+export function demoGraphView(): GraphView {
+  const nodes: NodeView[] = [
+    demoNode(DEMO_ROOT, "snapshot", "mutating", "passed", true, [], "claude-sonnet-4-6"),
+    demoNode(
+      DEMO_EDIT,
+      "codebase-edit",
+      "mutating",
+      "passed",
+      true,
+      [DEMO_ROOT],
+      "claude-sonnet-4-6",
+    ),
+    demoNode(
+      DEMO_VALD,
+      "validation",
+      "observing",
+      "passed",
+      false,
+      [DEMO_EDIT],
+      null,
+    ),
+    demoNode(
+      DEMO_SNAP,
+      "snapshot",
+      "mutating",
+      "pending",
+      true,
+      [DEMO_EDIT],
+      "claude-sonnet-4-6",
+    ),
+  ];
+  const edges = [
+    { from: DEMO_ROOT, to: DEMO_EDIT, edgeType: "PARENT_CHILD" as EdgeType },
+    { from: DEMO_EDIT, to: DEMO_VALD, edgeType: "VALIDATES" as EdgeType },
+    { from: DEMO_EDIT, to: DEMO_SNAP, edgeType: "PARENT_CHILD" as EdgeType },
+  ];
+  const refs = [
+    { name: "HEAD", kind: "Head" as const, target: DEMO_EDIT },
+    { name: "main", kind: "Branch" as const, target: DEMO_EDIT },
+  ];
+  return { schemaVersion: 1, nodes, edges, refs };
+}
+
+/**
+ * Enter browser mock mode: seed the demo DAG as the `graph_view` snapshot and
+ * turn on auto-emit so dispatched mutations forward their op-log events. Called
+ * once from `client.ts` when no Tauri runtime is present.
+ */
+export function seedDemoGraph(): void {
+  state.graphView = demoGraphView();
+  state.autoEmit = true;
+  state.nextSeq = 1;
 }
 
 // --- The mocked @tauri-apps/api surface --------------------------------------
@@ -155,6 +425,18 @@ export async function mockInvoke<T>(
       state.dispatched.push(cmd);
       const reply =
         state.dispatchReplies[cmd.command] ?? state.defaultDispatchReply(cmd);
+      // In browser mock mode, forward the plausible op-log events the real
+      // daemon would emit AFTER returning the reply, so the reducer + optimistic
+      // UI advance. Deliver on a microtask so the caller has registered its
+      // optimistic op (beginOptimistic) before the reconciling event lands.
+      if (state.autoEmit) {
+        const events = autoEmitFor(cmd, reply);
+        if (events.length > 0) {
+          void Promise.resolve().then(() => {
+            for (const ev of events) emitOpLogEvent(ev);
+          });
+        }
+      }
       return reply as unknown as T;
     }
     default:
