@@ -10,7 +10,7 @@
 - Status: `[ ]` todo · `[~]` in progress · `[x]` done. Keep this file updated as the single source of progress.
 - **At the end of EVERY phase (required):** (1) re-verify yourself — run `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo fmt --all --check` from the repo root (prefix cargo with `export PATH="$HOME/.cargo/bin:$PATH"`); **do not trust an agent's self-report — they can be stale (e.g. fmt)**; for the no-stub check grep for the **macros** `grep -rnE 'todo!\(|unimplemented!\(|unreachable!\(' crates/*/src` (must be empty) — do NOT grep bare `TODO`/`FIXME`/`XXX`, which `spork-runner` legitimately contains as its detection patterns (see plan §8.3 exclusion); (2) check off the phase's Build + DoD boxes and append a one-line `✅ verified (N tests green)` note to the phase; (3) update the **Current status** line below; (4) commit the code as `Fx: <name> …` and the doc update as `docs: mark Fx done …`. A box is only `[x]` once independently re-verified green.
 
-**Current status:** **🎉 FOUNDATION COMPLETE — F0–F4 all done.** 26 crates, **826 tests green**, clippy/fmt clean, no stub macros. F0 byte-identity · F1 event-sourcing · F2 typed-graph · F3 (headless) daemon/security/drift/restore/git · F4 execution/result/provider/context seams. Every load-bearing contract is frozen with exactly one real impl; the feature phases **P5–P9 are now purely additive behind these seams**. Committed on `feat/f0-byte-identity`. **Roadmap:** P5 → **F3-UI** (immediately after P5; code-unblocked now, needs only a GUI environment — see §F3-UI) → P6 → P7 → P8 → P9. Next buildable-here step: **P5 — Four Built-In Node Types**.
+**Current status:** **🎉 FOUNDATION COMPLETE — F0–F4 all done.** 26 crates, **826 tests green**, clippy/fmt clean, no stub macros. F0 byte-identity · F1 event-sourcing · F2 typed-graph · F3 (headless) daemon/security/drift/restore/git · F4 execution/result/provider/context seams. Every load-bearing contract is frozen with exactly one real impl; the feature phases **P5–P9 are now purely additive behind these seams**. Plus **P5 complete** — 27 crates, **913 tests green**: six built-in node types (Edit/Validation/Stress/Sanity + Merge/Snapshot) through the public registry; Edit auto-runs Sanity; append-only results; 3-way merge; import-as-snapshot; additive-only. Committed on `feat/f0-byte-identity`. **Roadmap:** ✅F0–F4 ✅P5 → **F3-UI** (immediately after P5; code-unblocked, needs only a GUI environment — see §F3-UI) → P6 → P7 → P8 → P9. Next buildable-here step: **P6 — Multi-Provider Routing & Cost Ledger**.
 
 ---
 
@@ -178,22 +178,22 @@ These are foundation infrastructure, not features — wired in behind frozen sea
 ## P5 — Four Built-In Node Types
 **Goal:** Ship the four product built-ins (+ Merge, Snapshot) through the same F2 registry + F4 Runner SPI. **Depends on:** F3, F4. **Design:** §6.2, §6.5, §7.1, §8.1, §8.2, A.4. **Freeze before:** the four built-in payload schemas (versioned).
 
-**Build:**
-- [ ] `nodes/edit/` — binds **both** `contentRef` and `conversationRef`; `diffSummary`/`filesChanged`/`toolCalls[]`/`contextSources[]`
-- [ ] `nodes/validation/` + `nodes/stress/` — runners behind the F4 SPI (junit-xml; p50/p95/p99/throughput/peak-mem/fuzz-corpus)
-- [ ] `nodes/sanity/` — auto-run change-scoped, debounced, hermetic
-- [ ] `nodes/merge/` — three-way reconciliation; Monaco conflict UI; observing children marked stale + re-run post-merge
-- [ ] `nodes/snapshot/` — `origin = auto_drift | manual | import` (Import is a Snapshot, not a separate kind)
-- [ ] data-driven node card / details / legend off the descriptor
+**Build:** (new crate `spork-nodes` + additive variants in `spork-ipc` + additive wiring in `spork-daemon`)
+- [x] Edit (`spork-nodes::edit`) — Mutating, owns_snapshot; binds **both** `contentRef` and `conversation_ref`; `diff_summary`/`files_changed`/`tool_calls`/`context_sources`
+- [x] Validation + Stress (`spork-nodes::validation`/`stress`) — Observing runners behind the F4 SPI (JUnit-XML → `ResultEnvelope.units`; p50/p95/p99/throughput/peak-mem metrics)
+- [x] Sanity (`spork-nodes::sanity`) — auto-run change-scoped, debounced, hermetic (reuses the F4 SanityRunner)
+- [x] Merge (`spork-nodes::merge`) — 3-way reconciliation (nearest common ancestor) → clean materializable Merge node; conflicts return a conflict set (no half-node); observing children re-run post-merge. *(Visual Monaco conflict UI is F3-UI.)*
+- [x] Snapshot (`spork-nodes::snapshot`) — `origin = auto_drift | manual | import` (Import is a Snapshot, not a separate kind — A.7 C-2)
+- [~] data-driven node card / details / legend off the descriptor — **data is defined** (`ui_contributions` on the descriptor); the actual rendering is **F3-UI**
 
 **Definition of Done:**
-- [ ] all four (+ Merge, Snapshot) register through the public registry exactly as a third party would (zero special-casing)
-- [ ] Edit auto-triggers Sanity with cache hits on unchanged subtrees
-- [ ] Validation/Stress attach append-only results without mutating the parent
-- [ ] branch → alternate Edit → merges through Monaco three-way UI into a clean, materializable Merge node whose observing results re-run post-merge
-- [ ] Import ingests external state as an `origin=import` Snapshot node
+- [x] all six (Edit/Validation/Stress/Sanity + Merge/Snapshot) register through the public registry exactly as a third party would (zero special-casing; `register_builtins` → public `register_descriptor`)
+- [x] Edit auto-triggers Sanity with cache hits on unchanged subtrees (CHECK_SCHEDULED → RESULT_RECORDED; cache hit via F4 input_digest)
+- [x] Validation/Stress attach append-only results without mutating the parent (parent snapshot_hash unchanged; observing children via VALIDATES/STRESSES edges)
+- [x] branch → alternate Edit → merges via 3-way into a clean, materializable Merge node whose observing results re-run post-merge; conflicting merge returns a conflict set, no half-node
+- [x] Import ingests external state as an `origin=import` Snapshot node
 
-**Demoable:** run an Edit, watch Sanity auto-run + Validation/Stress attach results; branch, merge through the three-way diff into a Merge node whose checks re-run against the merged tree.
+**Demoable:** run an Edit, watch Sanity auto-run + Validation/Stress attach results; branch, merge through 3-way into a Merge node whose checks re-run against the merged tree. ✅ verified (913 tests green); additive-only — no frozen contract changed.
 
 ---
 

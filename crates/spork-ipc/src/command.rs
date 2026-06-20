@@ -17,6 +17,13 @@
 //! | [`Command::GcRun`]       | `gc.run`       | mutation |
 //! | [`Command::NodeDiff`]    | `node.diff`    | read |
 //! | [`Command::BlobRead`]    | `blob.read`    | read |
+//! | [`Command::NodeRunCheck`] | `node.runCheck` | mutation |
+//! | [`Command::BranchMerge`]  | `branch.merge`  | mutation |
+//!
+//! The last two are P5 additions (DESIGN.md §6.5, §8.1, §8.2): running an
+//! observing check against a node, and merging a branch via 3-way reconciliation.
+//! They are appended, not inserted, so the frozen wire form of the original
+//! variants is unchanged (CLAUDE.md C2/C3).
 //!
 //! # The load-bearing rule (frozen here)
 //!
@@ -183,6 +190,41 @@ pub enum Command {
         /// The path within that tree.
         path: String,
     },
+
+    /// Run an observing check (Validation/Stress/Sanity) against a node (P5,
+    /// DESIGN.md §6.5, §8.1, §8.2). A *mutation*: returns an `op_id`; the daemon
+    /// runs the check via the F4 Runner SPI, stores an append-only
+    /// `ResultEnvelope`, and attaches an **observing** result node to the target
+    /// without mutating it — emitting
+    /// [`OpLogEvent::ResultRecorded`](crate::OpLogEvent::ResultRecorded).
+    NodeRunCheck {
+        /// The node the check observes. Its snapshot is never mutated; the result
+        /// attaches as an observing child (DESIGN.md §8.1).
+        target_node_id: Ulid,
+        /// The check specification (which built-in check, its command/config),
+        /// resolved by the daemon against the registered node types. A free
+        /// JSON value so new check shapes need no contract change (CLAUDE.md C3).
+        spec: serde_json::Value,
+    },
+
+    /// Merge a branch into a target ref via 3-way reconciliation (P5, DESIGN.md
+    /// §6.5). A *mutation*: returns an `op_id`; on a clean reconciliation the
+    /// daemon creates a materializable Merge node (owns a snapshot) and emits
+    /// [`OpLogEvent::MergePerformed`](crate::OpLogEvent::MergePerformed). On
+    /// conflicts it returns the conflict set in the
+    /// [`CommandResult`](crate::CommandResult) and builds **no** half-node.
+    BranchMerge {
+        /// The ref the merge result lands on.
+        into_ref: String,
+        /// The node carrying the changes being merged in.
+        from_node_id: Ulid,
+        /// An optional pre-supplied conflict resolution (e.g. from the F3-UI
+        /// three-way resolver). `None` requests an automatic reconciliation;
+        /// when conflicts remain the command returns a conflict set instead of
+        /// merging. A free JSON value so the resolution schema can evolve
+        /// without a contract change (CLAUDE.md C3).
+        resolution: Option<serde_json::Value>,
+    },
 }
 
 impl Command {
@@ -233,6 +275,20 @@ mod tests {
             Command::OpUndo { op_id: Some(a) },
             Command::OpRedo { op_id: None },
             Command::GcRun { dry_run: true },
+            Command::NodeRunCheck {
+                target_node_id: a,
+                spec: serde_json::json!({"check": "validation", "command": "cargo test"}),
+            },
+            Command::BranchMerge {
+                into_ref: "main".into(),
+                from_node_id: b,
+                resolution: None,
+            },
+            Command::BranchMerge {
+                into_ref: "main".into(),
+                from_node_id: b,
+                resolution: Some(serde_json::json!({"hunks": []})),
+            },
         ]
     }
 
@@ -295,5 +351,48 @@ mod tests {
         let with_null = r#"{"command":"OP_UNDO","opId":null}"#;
         let parsed: Command = serde_json::from_str(with_null).unwrap();
         assert_eq!(parsed, Command::OpUndo { op_id: None });
+    }
+
+    #[test]
+    fn p5_commands_use_tagged_camel_case_wire_form() {
+        // NODE_RUN_CHECK carries the observed target and an opaque spec.
+        let target = Ulid::new();
+        let check = Command::NodeRunCheck {
+            target_node_id: target,
+            spec: serde_json::json!({"check": "sanity"}),
+        };
+        let v = serde_json::to_value(&check).unwrap();
+        assert_eq!(v["command"], "NODE_RUN_CHECK");
+        assert_eq!(v["targetNodeId"], target.to_string());
+        assert_eq!(v["spec"]["check"], "sanity");
+
+        // BRANCH_MERGE carries the into-ref, source node, and optional resolution.
+        let from = Ulid::new();
+        let merge = Command::BranchMerge {
+            into_ref: "main".into(),
+            from_node_id: from,
+            resolution: None,
+        };
+        let mv = serde_json::to_value(&merge).unwrap();
+        assert_eq!(mv["command"], "BRANCH_MERGE");
+        assert_eq!(mv["intoRef"], "main");
+        assert_eq!(mv["fromNodeId"], from.to_string());
+        assert!(mv["resolution"].is_null());
+    }
+
+    #[test]
+    fn p5_commands_are_mutations() {
+        // Both new commands are mutations: they return an op_id and emit events.
+        assert!(Command::NodeRunCheck {
+            target_node_id: Ulid::new(),
+            spec: serde_json::Value::Null,
+        }
+        .is_mutation());
+        assert!(Command::BranchMerge {
+            into_ref: "main".into(),
+            from_node_id: Ulid::new(),
+            resolution: None,
+        }
+        .is_mutation());
     }
 }

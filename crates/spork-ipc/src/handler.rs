@@ -151,6 +151,17 @@ mod tests {
                 against: None,
             },
             Command::GcRun { dry_run: true },
+            // P5 mutations dispatch through the same seam with zero special
+            // casing — they fall into the generic mutation arm.
+            Command::NodeRunCheck {
+                target_node_id: Ulid::new(),
+                spec: serde_json::json!({"check": "sanity"}),
+            },
+            Command::BranchMerge {
+                into_ref: "main".into(),
+                from_node_id: Ulid::new(),
+                resolution: None,
+            },
         ];
         for cmd in cmds {
             let r = h.dispatch(cmd.clone()).unwrap();

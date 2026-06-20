@@ -145,6 +145,45 @@ pub enum OpLogEvent {
         /// Ordered position in the stream.
         seq: u64,
     },
+
+    /// An observing check's result was recorded (P5 `RESULT_RECORDED`, DESIGN.md
+    /// §6.5, §8.1, §8.2). Emitted when a
+    /// [`Command::NodeRunCheck`](crate::Command::NodeRunCheck) (or the auto-run
+    /// Sanity hook) stores an append-only `ResultEnvelope` and attaches an
+    /// observing result node — the observed parent is never mutated.
+    ResultRecorded {
+        /// Ordered position in the stream.
+        seq: u64,
+        /// The run that produced the result (correlates with a prior
+        /// [`OpLogEvent::CheckScheduled`]).
+        run_id: Ulid,
+        /// The observing result node that was attached to the target.
+        node_id: Ulid,
+    },
+
+    /// A merge was performed (P5 `MERGE_PERFORMED`, DESIGN.md §6.5). Emitted by a
+    /// clean [`Command::BranchMerge`](crate::Command::BranchMerge): a
+    /// materializable Merge node (owning a snapshot) was created from the 3-way
+    /// reconciliation. A conflicting merge emits no event and returns a conflict
+    /// set instead.
+    MergePerformed {
+        /// Ordered position in the stream.
+        seq: u64,
+        /// The created Merge node.
+        node_id: Ulid,
+    },
+
+    /// An observing check was scheduled (P5 `CHECK_SCHEDULED`, DESIGN.md §6.5,
+    /// §8.2). Emitted by the Edit auto-run hook before the check runs, so the
+    /// renderer can show the pending check; the matching
+    /// [`OpLogEvent::ResultRecorded`] follows when it completes.
+    CheckScheduled {
+        /// Ordered position in the stream.
+        seq: u64,
+        /// The scheduled run id, correlated with the later
+        /// [`OpLogEvent::ResultRecorded`].
+        run_id: Ulid,
+    },
 }
 
 impl OpLogEvent {
@@ -163,7 +202,10 @@ impl OpLogEvent {
             | OpLogEvent::RestorePerformed { seq, .. }
             | OpLogEvent::OpUndone { seq }
             | OpLogEvent::OpRedone { seq }
-            | OpLogEvent::GcPerformed { seq } => *seq,
+            | OpLogEvent::GcPerformed { seq }
+            | OpLogEvent::ResultRecorded { seq, .. }
+            | OpLogEvent::MergePerformed { seq, .. }
+            | OpLogEvent::CheckScheduled { seq, .. } => *seq,
         }
     }
 
@@ -182,6 +224,9 @@ impl OpLogEvent {
             OpLogEvent::OpUndone { .. } => "OP_UNDONE",
             OpLogEvent::OpRedone { .. } => "OP_REDONE",
             OpLogEvent::GcPerformed { .. } => "GC_PERFORMED",
+            OpLogEvent::ResultRecorded { .. } => "RESULT_RECORDED",
+            OpLogEvent::MergePerformed { .. } => "MERGE_PERFORMED",
+            OpLogEvent::CheckScheduled { .. } => "CHECK_SCHEDULED",
         }
     }
 }
@@ -326,6 +371,16 @@ mod tests {
             OpLogEvent::OpUndone { seq: 7 },
             OpLogEvent::OpRedone { seq: 8 },
             OpLogEvent::GcPerformed { seq: 9 },
+            OpLogEvent::ResultRecorded {
+                seq: 10,
+                run_id: m,
+                node_id: n,
+            },
+            OpLogEvent::MergePerformed {
+                seq: 11,
+                node_id: m,
+            },
+            OpLogEvent::CheckScheduled { seq: 12, run_id: n },
         ]
     }
 
@@ -391,12 +446,13 @@ mod tests {
 
     #[test]
     fn unknown_future_variant_is_forward_tolerated() {
-        // Simulate a NEWER daemon emitting a variant this build has never seen.
-        // An old reducer must NOT fail; it must retain ordering and skip it.
+        // Simulate a NEWER daemon emitting a variant this build has never seen
+        // (a hypothetical post-P5 event). An old reducer must NOT fail; it must
+        // retain ordering and skip it.
         let future = serde_json::json!({
-            "type": "MERGE_PERFORMED",
+            "type": "POLICY_EVALUATED",
             "seq": 7,
-            "intoRef": "main",
+            "policyRef": "main",
             "nodeId": Ulid::new().to_string(),
             "futureField": {"nested": true}
         });
@@ -412,7 +468,7 @@ mod tests {
         assert_eq!(me.known(), None);
         match &me {
             MaybeEvent::Unknown { type_tag, raw, .. } => {
-                assert_eq!(type_tag, "MERGE_PERFORMED");
+                assert_eq!(type_tag, "POLICY_EVALUATED");
                 // The raw body is preserved verbatim for forwarding.
                 assert_eq!(raw["futureField"]["nested"], true);
             }
@@ -425,12 +481,78 @@ mod tests {
     }
 
     #[test]
+    fn p5_events_are_known_after_addition() {
+        // The variants that were "future/unknown" before P5 now decode as Known
+        // through MaybeEvent — proof the additive growth is what the wrapper
+        // anticipated, while the wrapper still tolerates the *next* unknown.
+        let merge = OpLogEvent::MergePerformed {
+            seq: 7,
+            node_id: Ulid::new(),
+        };
+        let json = serde_json::to_string(&merge).unwrap();
+        let me: MaybeEvent = serde_json::from_str(&json).unwrap();
+        assert!(!me.is_unknown());
+        assert_eq!(me.known(), Some(&merge));
+
+        let result = OpLogEvent::ResultRecorded {
+            seq: 8,
+            run_id: Ulid::new(),
+            node_id: Ulid::new(),
+        };
+        let rj = serde_json::to_string(&result).unwrap();
+        assert_eq!(
+            serde_json::from_str::<MaybeEvent>(&rj).unwrap(),
+            MaybeEvent::Known(result)
+        );
+
+        let scheduled = OpLogEvent::CheckScheduled {
+            seq: 9,
+            run_id: Ulid::new(),
+        };
+        let sj = serde_json::to_string(&scheduled).unwrap();
+        assert_eq!(
+            serde_json::from_str::<MaybeEvent>(&sj).unwrap(),
+            MaybeEvent::Known(scheduled)
+        );
+    }
+
+    #[test]
+    fn p5_events_use_frozen_screaming_snake_wire_tags() {
+        // Wire tags match the P5 names so renderer/daemon agree on the contract.
+        assert_eq!(
+            serde_json::to_value(OpLogEvent::ResultRecorded {
+                seq: 1,
+                run_id: Ulid::new(),
+                node_id: Ulid::new(),
+            })
+            .unwrap()["type"],
+            "RESULT_RECORDED"
+        );
+        assert_eq!(
+            serde_json::to_value(OpLogEvent::MergePerformed {
+                seq: 1,
+                node_id: Ulid::new(),
+            })
+            .unwrap()["type"],
+            "MERGE_PERFORMED"
+        );
+        assert_eq!(
+            serde_json::to_value(OpLogEvent::CheckScheduled {
+                seq: 1,
+                run_id: Ulid::new(),
+            })
+            .unwrap()["type"],
+            "CHECK_SCHEDULED"
+        );
+    }
+
+    #[test]
     fn mixed_stream_reduces_in_seq_order_ignoring_unknowns() {
         // An old reducer tailing a stream that interleaves known and future
         // events folds only the known ones, in order, with no gaps in its view.
         let stream = serde_json::json!([
             {"type":"NODE_CREATED","seq":1,"nodeId":Ulid::new().to_string(),"schemaVersion":1},
-            {"type":"MERGE_PERFORMED","seq":2,"intoRef":"main"},
+            {"type":"POLICY_EVALUATED","seq":2,"policyRef":"main"},
             {"type":"REF_MOVED","seq":3,"ref":"main","to":Ulid::new().to_string()},
             {"type":"SOME_FUTURE_EVENT","seq":4},
         ]);

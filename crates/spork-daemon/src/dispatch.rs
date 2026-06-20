@@ -75,6 +75,15 @@ impl Daemon {
             Command::GcRun { dry_run } => self.cmd_gc_run(dry_run),
             Command::NodeDiff { node_id, against } => self.cmd_node_diff(node_id, against),
             Command::BlobRead { tree_hash, path } => self.cmd_blob_read(tree_hash, &path),
+            Command::NodeRunCheck {
+                target_node_id,
+                spec,
+            } => self.cmd_node_run_check(target_node_id, spec),
+            Command::BranchMerge {
+                into_ref,
+                from_node_id,
+                resolution,
+            } => self.cmd_branch_merge(&into_ref, from_node_id, resolution),
         }
     }
 
@@ -118,6 +127,9 @@ impl Daemon {
         )?;
 
         let version = parse_version(type_version)?;
+        // Keep a copy of the payload for the Edit auto-run hook below; the
+        // original is moved into the graph service.
+        let payload_for_hook = payload.clone();
         let envelope = {
             let mut core = self.core.lock().expect("daemon core mutex poisoned");
             core.graph
@@ -150,6 +162,13 @@ impl Daemon {
                 edge: EdgeType::ParentChild,
             })?;
         }
+
+        // P5 Edit auto-run hook (DESIGN §8.2 `onEditNodeCommitted`): creating an
+        // Edit (a mutating node) auto-schedules a change-scoped Sanity check
+        // against it, which cache-hits on an unchanged subtree. Best-effort and
+        // observing — a check failure never fails the Edit creation. Additive
+        // behind the frozen F3 create path (CLAUDE.md C3).
+        self.maybe_auto_run_sanity(node_id, kind, &payload_for_hook)?;
 
         Ok(self.record_mutation(serde_json::json!({ "nodeId": node_id.to_string() })))
     }
@@ -350,7 +369,7 @@ impl Daemon {
     /// Centralizing this guarantees every mutation returns the *same* shape (an
     /// op_id + ids, never resulting state) and that every performed op is on the
     /// undo cursor.
-    fn record_mutation(&self, ids: serde_json::Value) -> CommandResult {
+    pub(crate) fn record_mutation(&self, ids: serde_json::Value) -> CommandResult {
         let op_id = Ulid::new();
         {
             let mut core = self.core.lock().expect("daemon core mutex poisoned");

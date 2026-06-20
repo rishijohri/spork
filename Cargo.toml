@@ -27,6 +27,7 @@ members = [
     "crates/spork-provider",
     "crates/spork-context",
     "crates/spork-merge",
+    "crates/spork-nodes",
 ]
 
 # Shared external dependencies pinned once here so every member crate resolves

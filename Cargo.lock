@@ -1008,16 +1008,20 @@ dependencies = [
  "spork-cas",
  "spork-drift",
  "spork-edges",
+ "spork-exec",
  "spork-git",
  "spork-graph",
  "spork-hash",
  "spork-ignore",
  "spork-ipc",
  "spork-log",
+ "spork-merge",
  "spork-migrate",
+ "spork-nodes",
  "spork-projection",
  "spork-registry",
  "spork-restore",
+ "spork-runner",
  "spork-status",
  "spork-stream",
  "spork-vault",
@@ -1181,6 +1185,28 @@ version = "0.1.0"
 dependencies = [
  "serde_json",
  "thiserror",
+]
+
+[[package]]
+name = "spork-nodes"
+version = "0.1.0"
+dependencies = [
+ "semver",
+ "serde",
+ "serde_json",
+ "spork-asset",
+ "spork-canon",
+ "spork-cas",
+ "spork-exec",
+ "spork-graph",
+ "spork-hash",
+ "spork-ignore",
+ "spork-merge",
+ "spork-registry",
+ "spork-runner",
+ "tempfile",
+ "thiserror",
+ "ulid",
 ]
 
 [[package]]

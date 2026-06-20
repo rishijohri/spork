@@ -130,7 +130,12 @@ impl CommandResult {
                 // contract models the report explicitly as the `Gc` variant.
                 matches!(self, CommandResult::Gc { .. })
             }
-            // Every other command is a pure mutation.
+            // Every other command is a pure mutation. This includes the P5
+            // additions `NodeRunCheck` and `BranchMerge`: both return only an
+            // `op_id`, with their durable effect arriving over the event stream
+            // (`ResultRecorded` / `MergePerformed`). A conflicting `BranchMerge`
+            // still replies with `Mutation`; the conflict set rides the `ids`
+            // bag so the contract's reply *shape* is unchanged (DESIGN.md §6.5).
             _ => matches!(self, CommandResult::Mutation { .. }),
         }
     }
@@ -240,5 +245,39 @@ mod tests {
             node_id: node,
             against: None
         }));
+    }
+
+    #[test]
+    fn p5_commands_reply_with_mutation_shape() {
+        // The P5 additions are pure mutations: they reply with `Mutation`
+        // (op_id + ids), with state arriving over the event stream.
+        let run_check = Command::NodeRunCheck {
+            target_node_id: Ulid::new(),
+            spec: serde_json::Value::Null,
+        };
+        assert!(CommandResult::Mutation {
+            op_id: Ulid::new(),
+            ids: serde_json::json!({"nodeId": Ulid::new().to_string()}),
+        }
+        .matches_command(&run_check));
+
+        // A conflicting BranchMerge still replies with `Mutation`; the conflict
+        // set is carried in the `ids` bag, so the reply *shape* is unchanged.
+        let merge = Command::BranchMerge {
+            into_ref: "main".into(),
+            from_node_id: Ulid::new(),
+            resolution: None,
+        };
+        assert!(CommandResult::Mutation {
+            op_id: Ulid::new(),
+            ids: serde_json::json!({"conflicts": [{"path": "src/a.rs"}]}),
+        }
+        .matches_command(&merge));
+
+        // And a read shape is NOT a valid reply for either P5 mutation.
+        assert!(!CommandResult::Diff {
+            changed_paths: vec![]
+        }
+        .matches_command(&run_check));
     }
 }

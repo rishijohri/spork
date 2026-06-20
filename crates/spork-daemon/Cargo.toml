@@ -28,6 +28,15 @@ spork-stream = { path = "../spork-stream" }
 spork-drift = { path = "../spork-drift" }
 spork-restore = { path = "../spork-restore" }
 spork-git = { path = "../spork-git" }
+# F4 + P5
+# The daemon runs observing checks through the F4 Runner SPI (spork-exec
+# worktree + spork-runner cache) and merges branches via the P5 3-way
+# reconciliation, and registers the six P5 built-ins through the public registry
+# (DESIGN §7.1, §8.1, §8.2, A.4).
+spork-exec = { path = "../spork-exec" }
+spork-runner = { path = "../spork-runner" }
+spork-merge = { path = "../spork-merge" }
+spork-nodes = { path = "../spork-nodes" }
 
 ulid = { workspace = true, features = ["serde"] }
 serde = { workspace = true }
@@ -39,6 +48,10 @@ semver = { workspace = true }
 # The daemon's subscription methods return the stream transport's receiver type;
 # naming it directly keeps the public signatures concrete (DESIGN §14.4).
 crossbeam-channel = { workspace = true }
+# A P5 observing check materializes the target's snapshot into a throwaway
+# worktree, and a 3-way merge re-captures the reconciled tree from a scratch dir;
+# both create and drop a temp directory entirely inside the dispatch.
+tempfile = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -1,0 +1,44 @@
+[package]
+name = "spork-nodes"
+version = "0.1.0"
+edition = "2021"
+description = "Spork P5 built-in node types: the Edit/Validation/Stress/Sanity/Merge/Snapshot descriptors, versioned payload schemas, and observing Runners — all registered through the public NodeTypeRegistry exactly as a third-party plugin would (DESIGN §6.2, §6.5, §7.1, §8.1, §8.2, A.4)."
+
+[dependencies]
+# Inter-crate path deps. The built-ins register through the public F2 registry
+# and run through the F4 Runner SPI with zero special-casing, so P8 plugins are
+# purely additive (DESIGN §7.1, §8.1).
+spork-registry = { path = "../spork-registry" }
+spork-runner = { path = "../spork-runner" }
+spork-exec = { path = "../spork-exec" }
+spork-graph = { path = "../spork-graph" }
+spork-cas = { path = "../spork-cas" }
+spork-hash = { path = "../spork-hash" }
+spork-canon = { path = "../spork-canon" }
+spork-merge = { path = "../spork-merge" }
+# The 3-way merge re-captures the reconciled tree into the CAS via the public
+# `ObjectStore::put_tree`, which takes the F0-frozen deps-excluded ignore matcher
+# (DESIGN §10.5) — so the merged Merge node binds a genuine, materializable tree.
+spork-ignore = { path = "../spork-ignore" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+# A node type's `type_version` is a semver version (DESIGN §9.2), matching the
+# F2 registry's `NodeTypeDescriptor::type_version` axis.
+semver = { workspace = true }
+# Observing-check results carry a ULID `run_id` (the append-only history key,
+# DESIGN §7, §8.2), matching the identity scheme across F1-F4. The `serde`
+# feature lets a result envelope round-trip.
+ulid = { workspace = true, features = ["serde"] }
+# A clean 3-way merge materializes the reconciled files into a throwaway
+# directory and re-captures it with `ObjectStore::put_tree`, so the merged tree
+# is a real CAS object (`read_tree`/`materialize_tree` resolve it). The temp dir
+# is created and dropped entirely inside the merge; nothing persists.
+tempfile = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+# The end-to-end runner tests wire a real WorktreeCowBackend over the CAS + asset
+# stack and capture a snapshot via the deps-excluded ignore matcher, mirroring the
+# F4 spork-runner integration tests. No network clients are introduced.
+spork-asset = { path = "../spork-asset" }

@@ -183,6 +183,16 @@ pub struct Daemon {
     /// The node-id-keyed ephemeral side-channels (chat tokens, run stdout). Also
     /// outside the core lock; a flood here never stalls the ordered stream.
     pub(crate) ephemeral: EphemeralBus,
+    /// The content-addressed result cache for observing checks (P5).
+    ///
+    /// Keyed by the F4 [`DerivationKey`](spork_runner::DerivationKey) (input
+    /// digest + formula generation), so an identical
+    /// `(spec, input_tree, runner_version, change_scope)` re-run is a **cache
+    /// hit** that returns the stored envelope without re-executing — including the
+    /// auto-run Sanity check that cache-hits on an unchanged subtree (DESIGN §8.1,
+    /// §8.2, §9.2). Held outside the core lock (it is internally `Sync`) so a
+    /// check's cache I/O never contends with a graph dispatch.
+    pub(crate) result_cache: spork_runner::InMemoryResultCache,
 }
 
 /// A builder for a [`Daemon`], for callers that need a custom grant set or vault
@@ -303,6 +313,7 @@ impl DaemonBuilder {
             next_seq: Mutex::new(1),
             events: EventStream::new(),
             ephemeral: EphemeralBus::new(),
+            result_cache: spork_runner::InMemoryResultCache::new(),
         })
     }
 }
@@ -346,12 +357,20 @@ impl Daemon {
 }
 
 /// Build a fresh [`GraphService`] whose in-memory projection is rebuilt from the
-/// durable log, with the built-in `snapshot` type registered.
+/// durable log, with the six P5 built-in node types registered.
 ///
 /// Used at startup and after every guarded (restore/fork) operation, since the
 /// guard appends to the shared log out-of-band of the daemon's live service; a
 /// rebuild re-derives the projection bit-for-bit from the single source of truth
 /// (the log), which is exactly the F2 "graph is a pure projection" property.
+///
+/// The built-ins (Edit, Validation, Stress, Sanity, Merge, Snapshot) are
+/// registered through [`spork_nodes::register_builtins`] — the *public* registry
+/// path a P8 plugin uses, with no built-in-only side door (DESIGN §7.1, §9). This
+/// supersedes the F2 `register_builtin_snapshot` dogfood call (the `snapshot`
+/// kind is now one of the six P5 built-ins), and is purely additive: the F2
+/// `snapshot@1.0.0` contract is unchanged, just registered from one place that
+/// also brings the other five kinds.
 pub(crate) fn build_graph_service(
     log: &EventLog,
     writer: &WriterHandle,
@@ -360,10 +379,25 @@ pub(crate) fn build_graph_service(
     let projection = GraphProjection::rebuild_from_log(&reader)
         .map_err(|e| DaemonError::Graph(e.to_string()))?;
     let mut graph = GraphService::new(writer.clone(), projection, default_migrations());
-    graph
-        .register_builtin_snapshot()
-        .map_err(|e| DaemonError::Graph(e.to_string()))?;
+    register_builtins_into(&mut graph)?;
     Ok(graph)
+}
+
+/// Register the six P5 built-in node types into a graph service through the
+/// public registry path (DESIGN §7.1, §9).
+///
+/// Factored out so both the live service and any transient (restore-guard)
+/// service register the identical built-in set. It iterates
+/// [`spork_nodes::builtin_descriptors`] and calls the service's public
+/// [`register_descriptor`](GraphService::register_descriptor) for each — exactly
+/// the call a third-party plugin makes (no special-casing).
+pub(crate) fn register_builtins_into(graph: &mut GraphService) -> Result<(), DaemonError> {
+    for descriptor in spork_nodes::builtin_descriptors() {
+        graph
+            .register_descriptor(descriptor)
+            .map_err(|e| DaemonError::Graph(e.to_string()))?;
+    }
+    Ok(())
 }
 
 /// The shared (empty in v1) migration registry every rebuilt service uses.
@@ -378,17 +412,22 @@ fn default_migrations() -> Arc<spork_migrate::MigrationRegistry> {
 }
 
 /// The daemon's default grant set: snapshot read + write over the whole working
-/// tree, nothing else.
+/// tree, plus `process.spawn` so the built-in observing checks can run, and
+/// nothing else.
 ///
-/// This authorizes the daemon's own capture/restore (it is the trusted core),
-/// while every other capability — `process.spawn`, `net.connect`,
-/// `model.invoke`, `secrets.get` — stays denied by default until a caller grants
-/// it for a specific runner/scope (DESIGN.md §15.1, §15.2).
+/// This authorizes the daemon's own capture/restore and the P5 observing checks
+/// (the trusted core runs the six built-ins out of the box, DESIGN.md §7.1,
+/// §8.2), while every other capability — `net.connect`, `model.invoke`,
+/// `secrets.get` — stays denied by default until a caller grants it for a
+/// specific runner/scope (DESIGN.md §15.1, §15.2). A non-hermetic check
+/// (Validation/Stress) authorizes `process.spawn`; a hermetic one (Sanity)
+/// authorizes only `snapshot.read` (see [`crate::nodes`]).
 fn default_grants() -> Vec<Grant> {
     let worktree = Scope::new().with_path_globs([WORKTREE_GLOB]);
     vec![
         Grant::new(Capability::SnapshotRead, worktree.clone()),
-        Grant::new(Capability::SnapshotWrite, worktree),
+        Grant::new(Capability::SnapshotWrite, worktree.clone()),
+        Grant::new(Capability::ProcessSpawn, worktree),
     ]
 }
 
@@ -448,12 +487,15 @@ mod tests {
         let daemon = Daemon::open(dir.path()).unwrap();
         assert!(daemon.workdir().exists());
         assert!(daemon.cas_dir().exists());
-        // Default grants cover snapshot read+write and nothing else.
+        // Default grants cover snapshot read+write and process.spawn (so the
+        // built-in observing checks run out of the box, DESIGN §8.2) and nothing
+        // else — net/model/secrets stay denied by default.
         let core = daemon.core.lock().unwrap();
         let caps: Vec<_> = core.broker.grants().iter().map(|g| g.capability).collect();
         assert!(caps.contains(&Capability::SnapshotRead));
         assert!(caps.contains(&Capability::SnapshotWrite));
-        assert!(!caps.contains(&Capability::ProcessSpawn));
+        assert!(caps.contains(&Capability::ProcessSpawn));
+        assert!(!caps.contains(&Capability::NetConnect));
         assert!(!caps.contains(&Capability::SecretsGet));
     }
 }
