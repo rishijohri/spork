@@ -10,7 +10,7 @@
 - Status: `[ ]` todo · `[~]` in progress · `[x]` done. Keep this file updated as the single source of progress.
 - **At the end of EVERY phase (required):** (1) re-verify yourself — run `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo fmt --all --check` from the repo root (prefix cargo with `export PATH="$HOME/.cargo/bin:$PATH"`); **do not trust an agent's self-report — they can be stale (e.g. fmt)**; for the no-stub check grep for the **macros** `grep -rnE 'todo!\(|unimplemented!\(|unreachable!\(' crates/*/src` (must be empty) — do NOT grep bare `TODO`/`FIXME`/`XXX`, which `spork-runner` legitimately contains as its detection patterns (see plan §8.3 exclusion); (2) check off the phase's Build + DoD boxes and append a one-line `✅ verified (N tests green)` note to the phase; (3) update the **Current status** line below; (4) commit the code as `Fx: <name> …` and the doc update as `docs: mark Fx done …`. A box is only `[x]` once independently re-verified green.
 
-**Current status:** **🎉 FOUNDATION COMPLETE — F0–F4 all done.** 26 crates, **826 tests green**, clippy/fmt clean, no stub macros. F0 byte-identity · F1 event-sourcing · F2 typed-graph · F3 (headless) daemon/security/drift/restore/git · F4 execution/result/provider/context seams. Every load-bearing contract is frozen with exactly one real impl; the feature phases **P5–P9 are now purely additive behind these seams**. Committed on `feat/f0-byte-identity`. Next: **P5 — Four Built-In Node Types** (and the deferred **F3-UI** when a GUI env is available).
+**Current status:** **🎉 FOUNDATION COMPLETE — F0–F4 all done.** 26 crates, **826 tests green**, clippy/fmt clean, no stub macros. F0 byte-identity · F1 event-sourcing · F2 typed-graph · F3 (headless) daemon/security/drift/restore/git · F4 execution/result/provider/context seams. Every load-bearing contract is frozen with exactly one real impl; the feature phases **P5–P9 are now purely additive behind these seams**. Committed on `feat/f0-byte-identity`. **Roadmap:** P5 → **F3-UI** (immediately after P5; code-unblocked now, needs only a GUI environment — see §F3-UI) → P6 → P7 → P8 → P9. Next buildable-here step: **P5 — Four Built-In Node Types**.
 
 ---
 
@@ -126,10 +126,12 @@ These are foundation infrastructure, not features — wired in behind frozen sea
 
 ---
 
-## F3-UI — Tauri/React DAG Canvas (DEFERRED — needs a GUI environment)
-**Status:** **DEFERRED.** Not buildable/verifiable in a headless CLI sandbox (no display/webview). Binds only to the F3-frozen IPC + view-model contracts, so it is **purely additive — no rework** whenever it lands. **Design:** §14.1–§14.5, §15.1.
+## F3-UI — Tauri/React DAG Canvas (scheduled: immediately AFTER P5)
+**Status:** **CODE-UNBLOCKED as of F4** (no hard P5 dependency — it is schema-driven off `NodeTypeDescriptor` and binds only to the F3-frozen IPC + view-model contracts, both frozen; purely additive, no rework). The ONLY remaining prerequisite is an **environment**, which this headless CLI sandbox cannot provide. **Design:** §14.1–§14.5, §15.1.
 
-**Pick-up trigger (when to build):** when **BOTH** hold — (1) a **GUI-capable dev environment** is available (display + Tauri toolchain + a human able to do visual/interaction verification), and (2) the headless backend is complete **through at least F4** (so the canvas has execution/result/provider/context state to surface). **Recommended slot:** right **after P5** (Four Built-In Node Types) so the first canvas renders real Edit/Validation/Stress/Sanity/Merge nodes — but it may be picked up any time after the F3 headless core since the IPC it binds to is frozen.
+**SCHEDULED POSITION (the concrete answer):** the roadmap is `F0→F1→F2→F3-core→F4 (done) → P5 → **F3-UI** → P6 → P7 → P8 → P9`. F3-UI is the phase **immediately after P5**, so the first canvas renders the real Edit/Validation/Stress/Sanity/Merge node types. P6–P9 are backend and do NOT depend on F3-UI (they can proceed whether or not the UI has been built yet).
+
+**One hard prerequisite — a GUI-capable environment:** a display + the Tauri/Node toolchain + a human able to do visual/interaction verification. It CANNOT be built or verified in the current headless CLI sandbox (no display/webview), so it is not attempted here. **Pull-earlier rule:** because it has no hard P5 dependency, it may be pulled in *before* P5 — even right now — the moment a GUI environment is available; in the default headless flow P5 is built first (since that IS buildable here) and F3-UI follows immediately.
 
 **Build (when picked up):**
 - [ ] `app/` (Tauri shell, Rust core) — daemon source-of-truth → denormalized virtualized view-model → React Flow; ELK layout off-thread (Web Worker); lazy CAS diff in Monaco
