@@ -1,0 +1,48 @@
+[package]
+name = "spork-daemon"
+version = "0.1.0"
+edition = "2021"
+description = "Spork F3 headless daemon: the single integration point that wires graph, stream, broker, vault, drift, restore, and git behind the spork-ipc CommandHandler, plus the frozen view-model read surface (DESIGN §5.5, §14.1, §14.3)."
+
+[dependencies]
+# F0
+spork-hash = { path = "../spork-hash" }
+spork-canon = { path = "../spork-canon" }
+spork-ignore = { path = "../spork-ignore" }
+spork-cas = { path = "../spork-cas" }
+spork-asset = { path = "../spork-asset" }
+# F1
+spork-log = { path = "../spork-log" }
+spork-projection = { path = "../spork-projection" }
+spork-migrate = { path = "../spork-migrate" }
+# F2
+spork-graph = { path = "../spork-graph" }
+spork-registry = { path = "../spork-registry" }
+spork-edges = { path = "../spork-edges" }
+spork-status = { path = "../spork-status" }
+# F3
+spork-ipc = { path = "../spork-ipc" }
+spork-broker = { path = "../spork-broker" }
+spork-vault = { path = "../spork-vault" }
+spork-stream = { path = "../spork-stream" }
+spork-drift = { path = "../spork-drift" }
+spork-restore = { path = "../spork-restore" }
+spork-git = { path = "../spork-git" }
+
+ulid = { workspace = true, features = ["serde"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+# `node.create` carries a `type_version` string the daemon parses into the
+# `semver::Version` the F2 GraphService::create_node takes (DESIGN §7.2).
+semver = { workspace = true }
+# The daemon's subscription methods return the stream transport's receiver type;
+# naming it directly keeps the public signatures concrete (DESIGN §14.4).
+crossbeam-channel = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+proptest = { workspace = true }
+# The headless DoD tests open a real git repo fixture to prove export_to_git
+# leaves .git/HEAD/index/working-tree byte-unchanged.
+git2 = { workspace = true }

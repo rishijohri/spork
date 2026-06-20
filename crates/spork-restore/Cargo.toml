@@ -1,0 +1,31 @@
+[package]
+name = "spork-restore"
+version = "0.1.0"
+edition = "2021"
+description = "Spork F3 atomic dual-restore guard: materialize code and resolve the bound conversation ref under one lock, fail closed on divergence, plus metadata-only branch.fork (DESIGN §6.4, §10.3, §11.4)."
+
+[dependencies]
+spork-cas = { path = "../spork-cas" }
+spork-graph = { path = "../spork-graph" }
+spork-log = { path = "../spork-log" }
+spork-hash = { path = "../spork-hash" }
+thiserror = { workspace = true }
+# `RestoreOutcome`/`ExternalEffect`/`RefId` are schema-versioned, serde-round-trip
+# persisted records (CLAUDE.md C5); node ids are ULIDs; the bound conversation ref
+# is read from a JSON node payload.
+serde = { workspace = true }
+serde_json = { workspace = true }
+ulid = { workspace = true, features = ["serde"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+serde_json = { workspace = true }
+# Test-only: capture real CAS snapshots from a fixture directory through the
+# deps-excluded-by-default ignore profile, then prove restore materializes them
+# byte-identically. Not a library dependency.
+spork-ignore = { path = "../spork-ignore" }
+spork-cas = { path = "../spork-cas" }
+spork-graph = { path = "../spork-graph" }
+spork-log = { path = "../spork-log" }
+spork-hash = { path = "../spork-hash" }
+ulid = { workspace = true, features = ["serde"] }

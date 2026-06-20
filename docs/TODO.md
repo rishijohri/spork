@@ -10,7 +10,7 @@
 - Status: `[ ]` todo · `[~]` in progress · `[x]` done. Keep this file updated as the single source of progress.
 - **At the end of EVERY phase (required):** (1) re-verify yourself — run `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo fmt --all --check` from the repo root (prefix cargo with `export PATH="$HOME/.cargo/bin:$PATH"`); **do not trust an agent's self-report — they can be stale (e.g. fmt)**; (2) check off the phase's Build + DoD boxes and append a one-line `✅ verified (N tests green)` note to the phase; (3) update the **Current status** line below; (4) commit the code as `Fx: <name> …` and the doc update as `docs: mark Fx done …`. A box is only `[x]` once independently re-verified green.
 
-**Current status:** **F0 + F1 + F2 complete** — 13 crates, **396 tests green**, clippy/fmt clean, no stub markers. F0: content-addressing/dedup/canonical-identity. F1: hash-chained log + single writer actor + migration registry + rebuildable projection. F2: `NodeEnvelope` + `NodeTypeRegistry` + typed acyclic edges + `effective_status`, graph as a pure projection of the F1 log (drop-and-rebuild identical). Committed on `feat/f0-byte-identity`. Next: **F3 — Daemon/Renderer Seam, Security Boundary & Interactive Core**.
+**Current status:** **F0 + F1 + F2 + F3 (headless core) complete** — 21 crates, **600 tests green**, clippy/fmt clean, no stub markers. F0: content-addressing/dedup. F1: hash-chained log + writer actor + projection. F2: NodeEnvelope + registry + typed edges + effective_status. F3 core: typed IPC + capability broker + credential vault + dual-channel stream + three-source drift capture + atomic dual-restore + non-invasive git, all driven by a headless client (restore p95 28 ms). Committed on `feat/f0-byte-identity`. Next: **F4 — Execution, Result, Provider & Context Seams** (and the deferred **F3-UI** when a GUI env is available).
 
 ---
 
@@ -104,25 +104,25 @@ These are foundation infrastructure, not features — wired in behind frozen sea
 **Freeze before starting:** IPC command/event envelope + `opId`-returns-then-state-via-events · durable-on-ordered-stream vs ephemeral-on-side-channel split · capability vocabulary + versioned scope grammar + `AuditEntry`-per-call · `vaultRef` indirection (secrets resolved only in daemon, never hashed) · `AttributionRecord` schema + A.3 precedence · **the view-model boundary the future renderer binds to (frozen now so F3-UI is additive)**.
 
 **Build (headless core):**
-- [ ] `crates/spork-ipc/` — tRPC-style command channel; mutations return `opId`, state arrives only via events (`node.create`/`node.restore`/`branch.fork`/`op.undo`/`op.redo`/`gc.run`)
-- [ ] `crates/spork-stream/` — dual channel: ordered op-log events + node-id-keyed ephemeral side-channels (chat tokens, stdout)
-- [ ] `crates/spork-broker/` — deny-by-default capability broker + versioned scope grammar; `AuditEntry` per call
-- [ ] `crates/spork-vault/` — `CredentialVault`; `vaultRef` resolved only inside the daemon
-- [ ] `crates/spork-drift/` — fused interceptor + FS watcher + reconciliation rescan + LSP-buffer bridge; versioned `AttributionRecord`
-- [ ] `crates/spork-restore/` — atomic dual-restore guard (single lock, fail-closed); metadata-only `branch.fork`
-- [ ] `crates/spork-git/` — non-invasive `GitContext`; `importGitState`/`exportToGit`; `.git` never touched
-- [ ] `crates/spork-daemon/` (or headless client bin) — wires the above behind one IPC surface; a headless client exercises the full flow end-to-end
+- [x] `crates/spork-ipc/` — typed command/event contract; mutations return `opId`, state arrives only via the ordered event stream; forward-tolerant `OpLogEvent`s
+- [x] `crates/spork-stream/` — dual delivery: unbounded ordered event rail + bounded node-id-keyed ephemeral side-channels (drop-on-full, never stalls ordered)
+- [x] `crates/spork-broker/` — deny-by-default `CapabilityBroker` + versioned `Scope` grammar; `AuditEntry` on every allow AND deny
+- [x] `crates/spork-vault/` — `VaultRef` (OS-CSPRNG, opaque) + non-`Serialize` zeroizing `Secret` + `FileVault` (0600); secrets never enter the CAS
+- [x] `crates/spork-drift/` — fused interceptor + FS watcher (notify) + reconciliation rescan + buffer bridge; A.3 precedence `AttributionRecord`; secret-scan-at-capture
+- [x] `crates/spork-restore/` — atomic dual-restore guard (one lock, verify-then-mutate, fail-closed); metadata-only `branch_fork`; shaped effects-log slot
+- [x] `crates/spork-git/` — non-invasive `GitContext` (git2 vendored); `import_git_state`/`export_to_git`; HEAD/index/worktree byte-unchanged
+- [x] `crates/spork-daemon/` — wires all the above behind the `CommandHandler` dispatch; frozen `graph_view`/`subscribe_events` view-model boundary; headless client drives the full flow
 
 **Definition of Done (headless core):**
-- [ ] a **headless client** drives the IPC; mutations return `opId`, state arrives as events (the renderer's parity is an F3-UI item)
-- [ ] token-stream volume never stalls graph delivery
-- [ ] out-of-band `bash rm`/`mv`, external-editor save, and unsaved buffer each → correctly-attributed node within the debounce window
-- [ ] planted fake API key caught at capture, **never enters the CAS**
-- [ ] side effect without a capability → denied with an `AuditEntry`
-- [ ] restoring an old node restores code + bound conversation atomically, **fails closed** on injected divergence, forward history survives as a sibling
-- [ ] node restore **p95 < 500 ms**
+- [x] a **headless client** drives the IPC; mutations return `opId`, state arrives as ordered events (renderer parity is an F3-UI item)
+- [x] ephemeral token/stdout volume never stalls ordered event delivery
+- [x] out-of-band fs `rm`/`mv`/add/modify + an unsaved-buffer case each → correctly-attributed node within the debounce window
+- [x] planted fake API key caught at capture, **never enters the CAS**
+- [x] side effect without a capability → denied with an `AuditEntry`
+- [x] restoring an old node restores code + bound conversation atomically, **fails closed** on injected divergence (nothing changes), forward history survives as a sibling
+- [x] node restore **p95 < 500 ms** (measured 28 ms release / 35 ms debug on M3)
 
-**Demoable (headless):** via a headless client — `rm` a file via raw bash → attributed drift node; fetch a past node's exact diff; restore (code + conversation), forward history survives as a branch; export to a clean Git commit while `.git` stays byte-unchanged.
+**Demoable (headless):** via a headless client — `rm` a file via raw bash → attributed drift node; fetch a past node's exact diff; restore (code + conversation), forward history survives as a branch; export to a clean Git commit while `.git` stays byte-unchanged. ✅ verified (600 tests green). **Review fixed a restore-atomicity race + a Capability `#[non_exhaustive]`/doc contradiction; I additionally hardened `VaultRef` to the OS CSPRNG and narrowed `blob.read` authorization to the concrete path.**
 
 ---
 

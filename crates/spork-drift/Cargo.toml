@@ -1,0 +1,21 @@
+[package]
+name = "spork-drift"
+version = "0.1.0"
+edition = "2021"
+description = "Spork F3 drift capture: fuse three change sources, attribute each change, secret-scan at capture, and record an auto-drift snapshot node (DESIGN §10.1, §10.2, A.3, §15.5)."
+
+[dependencies]
+spork-cas = { path = "../spork-cas" }
+spork-graph = { path = "../spork-graph" }
+spork-ignore = { path = "../spork-ignore" }
+spork-hash = { path = "../spork-hash" }
+notify = { workspace = true }
+regex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+ulid = { workspace = true, features = ["serde"] }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+spork-log = { path = "../spork-log" }

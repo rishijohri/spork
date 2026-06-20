@@ -1,0 +1,16 @@
+[package]
+name = "spork-stream"
+version = "0.1.0"
+edition = "2021"
+description = "Spork F3 dual-delivery event transport: the ordered durable OpLogEvent stream and the node-id-keyed ephemeral side-channels that must never stall it (DESIGN §5.5, §14.4)."
+
+[dependencies]
+spork-ipc = { path = "../spork-ipc" }
+spork-log = { path = "../spork-log" }
+crossbeam-channel = { workspace = true }
+thiserror = { workspace = true }
+ulid = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+tempfile = { workspace = true }

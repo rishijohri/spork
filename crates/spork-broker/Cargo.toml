@@ -1,0 +1,14 @@
+[package]
+name = "spork-broker"
+version = "0.1.0"
+edition = "2021"
+description = "Spork F3 deny-by-default capability broker: the fixed Capability vocabulary, versioned Scope grammar, ScopedToken issuance, and the AuditEntry trail (DESIGN §15.1, §15.2)."
+
+[dependencies]
+spork-hash = { path = "../spork-hash" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

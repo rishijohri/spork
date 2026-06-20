@@ -1,0 +1,19 @@
+[package]
+name = "spork-git"
+version = "0.1.0"
+edition = "2021"
+description = "Spork F3 non-invasive Git bridge: import_git_state reads HEAD/branch/dirty and export_to_git writes a new branch from a node tree, both without mutating the user's .git HEAD, index, or working tree (DESIGN §10.4)."
+
+[dependencies]
+spork-cas = { path = "../spork-cas" }
+spork-graph = { path = "../spork-graph" }
+spork-hash = { path = "../spork-hash" }
+git2 = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+spork-ignore = { path = "../spork-ignore" }
+spork-log = { path = "../spork-log" }
+serde_json = { workspace = true }
+tempfile = { workspace = true }

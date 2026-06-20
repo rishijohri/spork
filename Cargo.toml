@@ -14,6 +14,14 @@ members = [
     "crates/spork-edges",
     "crates/spork-registry",
     "crates/spork-graph",
+    "crates/spork-ipc",
+    "crates/spork-broker",
+    "crates/spork-vault",
+    "crates/spork-stream",
+    "crates/spork-drift",
+    "crates/spork-restore",
+    "crates/spork-git",
+    "crates/spork-daemon",
 ]
 
 # Shared external dependencies pinned once here so every member crate resolves
@@ -34,6 +42,16 @@ anyhow = "1.0.102"
 rusqlite = { version = "0.37.0", features = ["bundled"] }
 ulid = "1.2.1"
 semver = "1.0.27"
+
+# F3 headless-core shared external dependencies.
+notify = "8.2.0"
+regex = "1.12.4"
+zeroize = "1.9.0"
+crossbeam-channel = "0.5.15"
+# spork-git compiles libgit2 from source via the `vendored-libgit2` feature so
+# `.git` access never depends on a system libgit2 (probed building here in this
+# environment). default-features are off to avoid linking a system libgit2.
+git2 = { version = "0.21.0", default-features = false, features = ["vendored-libgit2"] }
 
 # Dev-only shared dependencies.
 proptest = "1.11.0"

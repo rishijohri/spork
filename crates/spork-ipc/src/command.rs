@@ -1,0 +1,299 @@
+//! The [`Command`] request set — the frozen, typed mutation/read surface the
+//! renderer sends to the daemon.
+//!
+//! A `Command` is one entry on the request/response channel of the IPC contract
+//! (DESIGN.md A.1, "Command channel"). Each variant maps to a row of the A.1
+//! command table:
+//!
+//! | `Command` variant | A.1 command | Kind |
+//! |---|---|---|
+//! | [`Command::NodeCreate`]  | `node.create`  | mutation |
+//! | [`Command::NodeRestore`] | `node.restore` | mutation |
+//! | [`Command::BranchFork`]  | `branch.fork`  | mutation |
+//! | [`Command::RefCreate`]   | (ref creation) | mutation |
+//! | [`Command::RefMove`]     | (ref move)     | mutation |
+//! | [`Command::OpUndo`]      | `op.undo`      | mutation |
+//! | [`Command::OpRedo`]      | `op.redo`      | mutation |
+//! | [`Command::GcRun`]       | `gc.run`       | mutation |
+//! | [`Command::NodeDiff`]    | `node.diff`    | read |
+//! | [`Command::BlobRead`]    | `blob.read`    | read |
+//!
+//! # The load-bearing rule (frozen here)
+//!
+//! Mutation commands ([`Command::NodeCreate`] through [`Command::GcRun`]) return
+//! only a correlation handle ([`CommandResult::Mutation`]'s `op_id`); the
+//! resulting graph state arrives **exclusively** over the ordered
+//! [`OpLogEvent`](crate::OpLogEvent) stream. Read commands ([`Command::NodeDiff`],
+//! [`Command::BlobRead`]) return their data inline. See the crate-level docs and
+//! [`CommandResult`](crate::CommandResult) for the full statement of this rule.
+//!
+//! # Serde shape
+//!
+//! `Command` is internally tagged on a `"command"` field with
+//! `SCREAMING_SNAKE_CASE` variant names, so a wire payload reads
+//! `{"command":"NODE_CREATE", ...fields}`. Field names are `camelCase` to match
+//! the renderer's TypeScript binding (A.1 names commands and fields in
+//! camelCase). The tag is a stable string, not the enum's source order, so
+//! reordering or appending variants never changes the wire form (CLAUDE.md C2).
+//!
+//! Design references: DESIGN.md §5.5, §14.1, §14.4, A.1.
+
+use serde::{Deserialize, Serialize};
+use spork_graph::RefKind;
+use spork_hash::Hash;
+use ulid::Ulid;
+
+/// The schema version of the [`Command`] envelope.
+///
+/// Bumped only by an additive, backward-compatible change (a new variant or an
+/// optional field). A breaking change would instead introduce a *new* command
+/// generation rather than mutate this one in place (CLAUDE.md C2).
+pub const COMMAND_SCHEMA_VERSION: u16 = 1;
+
+/// A typed request from the renderer to the daemon.
+///
+/// Variants split cleanly into **mutations** — which return an
+/// [`op_id`](crate::CommandResult::Mutation) and emit
+/// [`OpLogEvent`](crate::OpLogEvent)s — and **reads**
+/// ([`Command::NodeDiff`], [`Command::BlobRead`]) which return data inline. The
+/// daemon authorizes every variant through the capability broker before acting
+/// (DESIGN.md §15.1).
+///
+/// This enum is **frozen**: existing variants and their fields do not change.
+/// The contract evolves only by appending new variants, which older daemons
+/// reject as unknown rather than misinterpret.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "command", rename_all = "SCREAMING_SNAKE_CASE")]
+#[serde(rename_all_fields = "camelCase")]
+pub enum Command {
+    /// Create a new typed work node (A.1 `node.create`). A *mutation*: returns
+    /// an `op_id`; the created node and its parent edges arrive as
+    /// [`OpLogEvent::NodeCreated`](crate::OpLogEvent::NodeCreated) and
+    /// [`OpLogEvent::EdgeAdded`](crate::OpLogEvent::EdgeAdded).
+    NodeCreate {
+        /// The node kind discriminator, resolved through the node-type registry
+        /// (DESIGN.md §6.2). A free string here so user-defined kinds need no
+        /// contract change (CLAUDE.md C3).
+        kind: String,
+        /// The registry type version the payload was authored against; lets the
+        /// daemon select the right payload migration (DESIGN.md §7.2).
+        type_version: String,
+        /// Lineage parents. Empty for a root node; one entry for a linear
+        /// child; several for a merge node (DESIGN.md §6.3).
+        parent_ids: Vec<Ulid>,
+        /// The branch ref this node is created on.
+        branch_id: String,
+        /// The node-type-specific payload, validated against the registry's
+        /// schema by the daemon (DESIGN.md §6.2, A.1).
+        payload: serde_json::Value,
+        /// Whether this node owns a restorable snapshot. Must agree with the
+        /// registry's declaration for `kind` or the daemon rejects it
+        /// (DESIGN.md §6.2 `ownsSnapshot`).
+        owns_snapshot: bool,
+        /// The content hash of the owned snapshot tree, present iff
+        /// `owns_snapshot` is true.
+        snapshot_hash: Option<Hash>,
+    },
+
+    /// Restore the code (and bound conversation) of an existing node
+    /// (A.1 `node.restore`). A *mutation*: returns an `op_id`; the restore is
+    /// recorded as [`OpLogEvent::RestorePerformed`](crate::OpLogEvent::RestorePerformed)
+    /// (and a [`OpLogEvent::RefMoved`](crate::OpLogEvent::RefMoved)). Restore is
+    /// an event, never an overwrite, so forward history survives (DESIGN.md
+    /// §6.4, §10.3).
+    NodeRestore {
+        /// The node whose snapshot/conversation to materialize.
+        node_id: Ulid,
+    },
+
+    /// Fork a new branch from a node (A.1 `branch.fork`). A *mutation*:
+    /// metadata-only (zero bytes copied); returns an `op_id`; emits
+    /// [`OpLogEvent::BranchForked`](crate::OpLogEvent::BranchForked) and
+    /// [`OpLogEvent::RefCreated`](crate::OpLogEvent::RefCreated) (DESIGN.md
+    /// §6.3, §10.3).
+    BranchFork {
+        /// The node the new branch's head points at.
+        from_node_id: Ulid,
+        /// Human-facing name of the new branch ref.
+        name: String,
+    },
+
+    /// Create a new ref (branch/tag/head). A *mutation*: returns an `op_id`;
+    /// emits [`OpLogEvent::RefCreated`](crate::OpLogEvent::RefCreated).
+    RefCreate {
+        /// The ref name.
+        name: String,
+        /// The kind of ref (DESIGN.md §6.3 `RefKind`).
+        kind: RefKind,
+        /// The node the new ref points at.
+        to: Ulid,
+    },
+
+    /// Move an existing ref to a different node. A *mutation*: returns an
+    /// `op_id`; emits [`OpLogEvent::RefMoved`](crate::OpLogEvent::RefMoved).
+    RefMove {
+        /// The ref name to move.
+        name: String,
+        /// The node the ref should now point at.
+        to: Ulid,
+    },
+
+    /// Undo an operation (A.1 `op.undo`). A *mutation*: returns an `op_id`;
+    /// emits [`OpLogEvent::OpUndone`](crate::OpLogEvent::OpUndone). `op_id`
+    /// `None` undoes the most recent undoable op.
+    OpUndo {
+        /// The specific op to undo, or `None` for the latest.
+        op_id: Option<Ulid>,
+    },
+
+    /// Redo an operation (A.1 `op.redo`). A *mutation*: returns an `op_id`;
+    /// emits [`OpLogEvent::OpRedone`](crate::OpLogEvent::OpRedone). `op_id`
+    /// `None` redoes the most recently undone op.
+    OpRedo {
+        /// The specific op to redo, or `None` for the latest.
+        op_id: Option<Ulid>,
+    },
+
+    /// Run garbage collection (A.1 `gc.run`). A *mutation*: returns an `op_id`
+    /// alongside the reclaimable report ([`CommandResult::Gc`](crate::CommandResult::Gc)),
+    /// and (when not a dry run) emits
+    /// [`OpLogEvent::GcPerformed`](crate::OpLogEvent::GcPerformed).
+    GcRun {
+        /// When true, compute the reclaimable set without deleting anything.
+        dry_run: bool,
+    },
+
+    /// Compute the changed-path set of a node against a baseline (A.1
+    /// `node.diff`). A **read**: returns [`CommandResult::Diff`](crate::CommandResult::Diff)
+    /// inline; emits no events (DESIGN.md §14.5).
+    NodeDiff {
+        /// The node to diff.
+        node_id: Ulid,
+        /// The op/node id to diff against, or `None` to diff against the node's
+        /// parent tree.
+        against: Option<Ulid>,
+    },
+
+    /// Read a blob from a tree by path (A.1 `blob.read`). A **read**: returns
+    /// [`CommandResult::Blob`](crate::CommandResult::Blob) inline; emits no
+    /// events. Fetched lazily by the renderer as files open (DESIGN.md §14.5).
+    BlobRead {
+        /// The tree hash to read from.
+        tree_hash: Hash,
+        /// The path within that tree.
+        path: String,
+    },
+}
+
+impl Command {
+    /// Whether this command is a *mutation* (returns an `op_id` and emits
+    /// events) as opposed to a *read* (returns data inline, emits nothing).
+    ///
+    /// This is the programmatic statement of the load-bearing rule, so a daemon
+    /// or test can assert the right result/return shape per command without
+    /// re-deriving the split by hand.
+    #[must_use]
+    pub fn is_mutation(&self) -> bool {
+        !matches!(self, Command::NodeDiff { .. } | Command::BlobRead { .. })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use spork_hash::hash_bytes;
+
+    fn sample_mutations() -> Vec<Command> {
+        let a = Ulid::new();
+        let b = Ulid::new();
+        vec![
+            Command::NodeCreate {
+                kind: "codebase-edit".into(),
+                type_version: "1.0.0".into(),
+                parent_ids: vec![a],
+                branch_id: "main".into(),
+                payload: serde_json::json!({"prompt": "do the thing"}),
+                owns_snapshot: true,
+                snapshot_hash: Some(hash_bytes(b"tree")),
+            },
+            Command::NodeRestore { node_id: a },
+            Command::BranchFork {
+                from_node_id: a,
+                name: "experiment".into(),
+            },
+            Command::RefCreate {
+                name: "v1".into(),
+                kind: RefKind::Tag,
+                to: b,
+            },
+            Command::RefMove {
+                name: "main".into(),
+                to: b,
+            },
+            Command::OpUndo { op_id: Some(a) },
+            Command::OpRedo { op_id: None },
+            Command::GcRun { dry_run: true },
+        ]
+    }
+
+    fn sample_reads() -> Vec<Command> {
+        let a = Ulid::new();
+        vec![
+            Command::NodeDiff {
+                node_id: a,
+                against: None,
+            },
+            Command::BlobRead {
+                tree_hash: hash_bytes(b"t"),
+                path: "src/main.rs".into(),
+            },
+        ]
+    }
+
+    #[test]
+    fn every_command_round_trips_through_json() {
+        for cmd in sample_mutations().into_iter().chain(sample_reads()) {
+            let json = serde_json::to_string(&cmd).expect("serialize");
+            let back: Command = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(cmd, back, "round-trip mismatch for {cmd:?}");
+        }
+    }
+
+    #[test]
+    fn wire_form_is_tagged_and_camel_cased() {
+        let cmd = Command::NodeCreate {
+            kind: "k".into(),
+            type_version: "1.0.0".into(),
+            parent_ids: vec![],
+            branch_id: "main".into(),
+            payload: serde_json::Value::Null,
+            owns_snapshot: false,
+            snapshot_hash: None,
+        };
+        let v: serde_json::Value = serde_json::to_value(&cmd).unwrap();
+        // Internally tagged on "command" with a SCREAMING_SNAKE_CASE tag.
+        assert_eq!(v["command"], "NODE_CREATE");
+        // Fields are camelCase to match the TS binding.
+        assert!(v.get("typeVersion").is_some());
+        assert!(v.get("parentIds").is_some());
+        assert!(v.get("ownsSnapshot").is_some());
+    }
+
+    #[test]
+    fn mutation_vs_read_classification_matches_contract() {
+        for cmd in sample_mutations() {
+            assert!(cmd.is_mutation(), "{cmd:?} should be a mutation");
+        }
+        for cmd in sample_reads() {
+            assert!(!cmd.is_mutation(), "{cmd:?} should be a read");
+        }
+    }
+
+    #[test]
+    fn optional_op_id_omitted_field_deserializes() {
+        // A renderer that sends `null` and one that sends the field both parse.
+        let with_null = r#"{"command":"OP_UNDO","opId":null}"#;
+        let parsed: Command = serde_json::from_str(with_null).unwrap();
+        assert_eq!(parsed, Command::OpUndo { op_id: None });
+    }
+}

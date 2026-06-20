@@ -1,0 +1,15 @@
+[package]
+name = "spork-vault"
+version = "0.1.0"
+edition = "2021"
+description = "Spork F3 credential vault: the opaque VaultRef, a zeroizing Secret that can never be persisted, the CredentialVault seam, and the FileVault backend (DESIGN §15.4)."
+
+[dependencies]
+zeroize = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+getrandom = "0.3"
+
+[dev-dependencies]
+tempfile = { workspace = true }
