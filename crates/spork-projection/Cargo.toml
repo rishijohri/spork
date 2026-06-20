@@ -1,0 +1,19 @@
+[package]
+name = "spork-projection"
+version = "0.1.0"
+edition = "2021"
+description = "Spork projections: pure folds over the event log with canonical checkpoints and bit-for-bit rebuild (DESIGN §6.1, A.2, A.6)."
+
+[dependencies]
+spork-log = { path = "../spork-log" }
+spork-canon = { path = "../spork-canon" }
+spork-hash = { path = "../spork-hash" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+spork-migrate = { path = "../spork-migrate" }
+ulid = { workspace = true }
+tempfile = { workspace = true }
+proptest = { workspace = true }

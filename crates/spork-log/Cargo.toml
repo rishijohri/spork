@@ -1,0 +1,21 @@
+[package]
+name = "spork-log"
+version = "0.1.0"
+edition = "2021"
+description = "Spork append-only hash-chained event log: single writer actor over SQLite-WAL, the system's source of truth (DESIGN §5.2, §6.1, A.1, A.6)."
+
+[dependencies]
+spork-hash = { path = "../spork-hash" }
+spork-canon = { path = "../spork-canon" }
+spork-migrate = { path = "../spork-migrate" }
+rusqlite = { workspace = true }
+ulid = { workspace = true, features = ["serde"] }
+blake3 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+spork-cas = { path = "../spork-cas" }
+tempfile = { workspace = true }
+proptest = { workspace = true }

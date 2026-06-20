@@ -7,6 +7,9 @@ members = [
     "crates/spork-cas",
     "crates/spork-asset",
     "crates/spork-cas-cli",
+    "crates/spork-migrate",
+    "crates/spork-log",
+    "crates/spork-projection",
 ]
 
 # Shared external dependencies pinned once here so every member crate resolves
@@ -24,6 +27,8 @@ reflink-copy = "0.1.30"
 walkdir = "2.5.0"
 clap = { version = "4.6.1", features = ["derive"] }
 anyhow = "1.0.102"
+rusqlite = { version = "0.37.0", features = ["bundled"] }
+ulid = "1.2.1"
 
 # Dev-only shared dependencies.
 proptest = "1.11.0"

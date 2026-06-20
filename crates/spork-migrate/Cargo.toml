@@ -1,0 +1,9 @@
+[package]
+name = "spork-migrate"
+version = "0.1.0"
+edition = "2021"
+description = "Spork forward-migration registry: lazy upgrade-on-read of older event payloads to the current schema version, never mutating stored bytes (C5)."
+
+[dependencies]
+serde_json = { workspace = true }
+thiserror = { workspace = true }
