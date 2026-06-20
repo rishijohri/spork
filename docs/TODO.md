@@ -9,7 +9,7 @@
 - **C5 (evolution-safe):** every persisted struct carries a `schema_version` + a registered migration from its first commit.
 - Status: `[ ]` todo · `[~]` in progress · `[x]` done. Keep this file updated as the single source of progress.
 
-**Current status:** **F0 complete** — 6 crates, 223 tests green, clippy/fmt clean, no stub markers; content-addressing/dedup/canonical-identity proven; cold capture optimized to ~0.07 ms/file (fsync-batching into a packfile + parallel hashing). Next: **F1 — Event-Sourcing Core**.
+**Current status:** **F0 + F1 complete** — 9 crates, **289 tests green**, clippy/fmt clean, no stub markers. F0: content-addressing/dedup/canonical-identity, cold capture ~0.07 ms/file. F1: append-only hash-chained log + single writer actor + migration registry + rebuildable projection (replay = drop-and-rebuild bit-for-bit; tamper detection; ~8–18k events/s). Committed on `feat/f0-byte-identity` (F0 `3650961`, F1 `d56ff26`). Next: **F2 — Typed-Graph Contracts as Data**.
 
 ---
 
@@ -56,19 +56,19 @@ These are foundation infrastructure, not features — wired in behind frozen sea
 **Freeze before starting:** Event schema + hash-chaining formula · single writer actor as the only projection write path (projection = pure fn of log) · per-event forward-migration + lazy-upgrade-on-read · checkpoint cadence + replay-window length (quantified) · **write-objects-then-log** crash ordering.
 
 **Build:**
-- [ ] `crates/spork-log/` — single serializing **writer actor** (the only write path); SQLite-WAL `event` table (ULID `event_id`, `seq`, `type`, `schema_version`, canonical `payload`, `prev_event_hash`, `this_event_hash`, `actor`)
-- [ ] `crates/spork-projection/` — pure `fn(log) -> projection`; periodic checkpoints
-- [ ] `crates/spork-migrate/` — `EventMigration` + `MigrationRegistry` keyed by `(EventType, schema_version)`
+- [x] `crates/spork-log/` — single serializing **writer actor** (the only write path); SQLite-WAL `event` table; frozen BLAKE3 hash-chain (golden-pinned); `verify_chain` tamper detection; migration-on-read
+- [x] `crates/spork-projection/` — pure `fn(log) -> projection`; canonical-hashed checkpoints; `rebuild_from_log`/`load_or_rebuild`; `EventTypeCounts` reference projection
+- [x] `crates/spork-migrate/` — `EventMigration` + `MigrationRegistry` keyed by `(EventType, from_version)`; chain upgrade applied on read
 
 **Definition of Done:**
-- [ ] replaying the full log reproduces the projection **bit-for-bit**
-- [ ] delete projection DB → rebuild yields identical projection (A.6)
-- [ ] tampering with any stored event is detected via the hash chain
-- [ ] bumping an event `schema_version` reads old events through migration with **no stored-event rewrite**
-- [ ] crash-injection matrix passes (object-fsync-before-log-commit → reclaimable orphan, never dangling ref)
-- [ ] append throughput **≥ 2k events/s** through the writer actor
+- [x] replaying the full log reproduces the projection **bit-for-bit**
+- [x] delete projection DB → rebuild yields identical projection (A.6)
+- [x] tampering with any stored event is detected via the hash chain (HashChainBroken at the right seq)
+- [x] bumping an event `schema_version` reads old events through migration with **no stored-event rewrite**
+- [x] crash-injection: object-fsync-before-log-commit → reclaimable orphan, never dangling ref (deterministic test w/ spork-cas)
+- [x] append throughput **≥ 2k events/s** through the writer actor (measured ~8–18k/s on M3, release)
 
-**Demoable:** append events, delete the projection DB, replay byte-identically, then bump a schema version and watch old events migrate on read.
+**Demoable:** append events, delete the projection DB, replay byte-identically, then bump a schema version and watch old events migrate on read. ✅ verified (289 tests green).
 
 ---
 
