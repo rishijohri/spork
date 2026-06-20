@@ -1,0 +1,10 @@
+# Frontend
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Tauri / Rust
+src-tauri/target/
+src-tauri/gen/
+# NOTE: src-tauri/Cargo.lock IS committed — this is a binary app, so the lockfile
+# is kept for reproducible Tauri builds (mirrors the committed package-lock.json).

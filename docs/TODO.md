@@ -10,7 +10,7 @@
 - Status: `[ ]` todo · `[~]` in progress · `[x]` done. Keep this file updated as the single source of progress.
 - **At the end of EVERY phase (required):** (1) re-verify yourself — run `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo fmt --all --check` from the repo root (prefix cargo with `export PATH="$HOME/.cargo/bin:$PATH"`); **do not trust an agent's self-report — they can be stale (e.g. fmt)**; for the no-stub check grep for the **macros** `grep -rnE 'todo!\(|unimplemented!\(|unreachable!\(' crates/*/src` (must be empty) — do NOT grep bare `TODO`/`FIXME`/`XXX`, which `spork-runner` legitimately contains as its detection patterns (see plan §8.3 exclusion); (2) check off the phase's Build + DoD boxes and append a one-line `✅ verified (N tests green)` note to the phase; (3) update the **Current status** line below; (4) commit the code as `Fx: <name> …` and the doc update as `docs: mark Fx done …`. A box is only `[x]` once independently re-verified green.
 
-**Current status:** **🎉 FOUNDATION COMPLETE — F0–F4 all done.** 26 crates, **826 tests green**, clippy/fmt clean, no stub macros. F0 byte-identity · F1 event-sourcing · F2 typed-graph · F3 (headless) daemon/security/drift/restore/git · F4 execution/result/provider/context seams. Every load-bearing contract is frozen with exactly one real impl; the feature phases **P5–P9 are now purely additive behind these seams**. Plus **P5 complete** — 27 crates, **913 tests green**: six built-in node types (Edit/Validation/Stress/Sanity + Merge/Snapshot) through the public registry; Edit auto-runs Sanity; append-only results; 3-way merge; import-as-snapshot; additive-only. Committed on `feat/f0-byte-identity`. **Roadmap:** ✅F0–F4 ✅P5 → **F3-UI** (immediately after P5; code-unblocked, needs only a GUI environment — see §F3-UI) → P6 → P7 → P8 → P9. Next buildable-here step: **P6 — Multi-Provider Routing & Cost Ledger**.
+**Current status:** **🎉 FOUNDATION COMPLETE — F0–F4 all done.** 26 crates, **826 tests green**, clippy/fmt clean, no stub macros. F0 byte-identity · F1 event-sourcing · F2 typed-graph · F3 (headless) daemon/security/drift/restore/git · F4 execution/result/provider/context seams. Every load-bearing contract is frozen with exactly one real impl; the feature phases **P5–P9 are now purely additive behind these seams**. Plus **P5 complete** — 27 crates, **913 tests green**: six built-in node types (Edit/Validation/Stress/Sanity + Merge/Snapshot) through the public registry; Edit auto-runs Sanity; append-only results; 3-way merge; import-as-snapshot; additive-only. Plus **F3-UI built** at `app/` (Tauri v2 + React/TS; 52 Vitest tests, tsc+vite+cargo all green here; **visual/UX pass pending on a display — run `cd app && npm run tauri:dev`**). Committed on `feat/f0-byte-identity`. **Roadmap:** ✅F0–F4 ✅P5 ✅F3-UI(build) → **P6** → P7 → P8 → P9. Next: **P6 — Multi-Provider Routing & Cost Ledger**.
 
 ---
 
@@ -133,16 +133,18 @@ These are foundation infrastructure, not features — wired in behind frozen sea
 
 **One hard prerequisite — a GUI-capable environment:** a display + the Tauri/Node toolchain + a human able to do visual/interaction verification. It CANNOT be built or verified in the current headless CLI sandbox (no display/webview), so it is not attempted here. **Pull-earlier rule:** because it has no hard P5 dependency, it may be pulled in *before* P5 — even right now — the moment a GUI environment is available; in the default headless flow P5 is built first (since that IS buildable here) and F3-UI follows immediately.
 
-**Build (when picked up):**
-- [ ] `app/` (Tauri shell, Rust core) — daemon source-of-truth → denormalized virtualized view-model → React Flow; ELK layout off-thread (Web Worker); lazy CAS diff in Monaco
-- [ ] five-region layout (top bar + model selector + toolbar; left navigator+legend; center DAG canvas; right Node-Details: chat+diff+results; bottom run rail)
-- [ ] op-log event reducer + optimistic UI w/ `opId` reconciliation; ephemeral side-channels for tokens/stdout
-- [ ] schema-driven node cards/details/legend off the `NodeTypeDescriptor`; sandboxed webview for custom UI contributions
+**Build:** ✅ built at `app/` (Tauri v2 + React 18/TS-strict; own workspace, excluded from the core 27). Verified here without a display: `cargo build --workspace` (core) unchanged, `tsc`+`vite build` 0 errors, **52 Vitest tests** (Tauri mocked), `cargo build`+clippy of `src-tauri`. Build tooling: `app/scripts/check.sh`, `.vscode/launch.json`, `app/README.md`.
+- [x] `app/` (Tauri shell, Rust core embedding `spork-daemon`) → view-model → React Flow; ELK layout off-thread (Web Worker); lazy CAS diff in Monaco
+- [x] five-region layout (top bar + model selector + toolbar; left navigator+legend; center DAG canvas; right Node-Details: chat+diff+results; bottom run rail)
+- [x] op-log event reducer (pure, forward-tolerant) + optimistic UI w/ subject-id reconciliation (OpLogEvent carries no opId); ephemeral side-channels for tokens/stdout
+- [x] schema-driven node cards/details/legend off the `NodeTypeDescriptor` `ui_contributions` (built-in + custom render identically); capability-allowlisted webview
 
-**Definition of Done (when picked up):**
-- [ ] renderer drives the **same** IPC as the headless client (parity)
-- [ ] canvas **≥ 55 fps @ 1k nodes**, click→diff **p95 < 150 ms**
-- [ ] click a node → exact state lazily from CAS; restore/branch from the canvas; layout positions stable as the graph grows
+**Definition of Done:** (component-tested here with mocked Tauri; **items needing a display are for the user to verify**)
+- [x] renderer drives the **same** IPC as the headless client (TS types match Rust serde shapes field-for-field; mutate-only-via-`dispatch`, read-via-`graph_view`/events; §15.1 boundary clean — no FS/provider imports)
+- [~] canvas **≥ 55 fps @ 1k nodes**, click→diff **p95 < 150 ms** — **needs a display; USER to verify** (`npm run tauri:dev`)
+- [~] click a node → exact state from CAS; restore/branch from the canvas; stable layout — wired + component-tested with mocked Tauri; **full visual/interaction pass is the USER's** UX testing
+
+> **To run/verify the UI (needs a display):** `cd app && npm install && npm run tauri:dev` (or VS Code "Tauri Development Debug"). `app/scripts/check.sh` runs the full no-display green bar.
 
 ---
 

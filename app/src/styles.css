@@ -1,0 +1,185 @@
+/* Spork F3-UI shell layout (DESIGN.md §14.2). Minimal, functional — the user
+   owns visual polish. The five regions are a CSS grid. */
+
+:root {
+  --bg: #141414;
+  --panel-bg: #1b1b1b;
+  --border: #2a2a2a;
+  --fg: #e5e7eb;
+  --muted: #9ca3af;
+  --card-bg: #1e1e1e;
+  --card-fg: #e5e7eb;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-size: 13px;
+}
+
+.spork-shell {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  height: 100%;
+}
+
+.spork-shell-main {
+  display: grid;
+  grid-template-columns: 200px 1fr 320px;
+  min-height: 0;
+}
+
+.spork-topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-bg);
+}
+
+.spork-topbar-actions,
+.spork-toolbar {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+button {
+  background: #2a2a2a;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+select {
+  background: #2a2a2a;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 3px 6px;
+}
+
+.spork-legend,
+.spork-details {
+  border-right: 1px solid var(--border);
+  padding: 10px;
+  overflow: auto;
+  background: var(--panel-bg);
+}
+
+.spork-details {
+  border-right: none;
+  border-left: 1px solid var(--border);
+}
+
+.spork-legend-title,
+.spork-details-title {
+  font-size: 13px;
+  margin: 0 0 8px;
+}
+
+.spork-legend-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.spork-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+}
+
+.spork-legend-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  display: inline-block;
+}
+
+.spork-shell-canvas {
+  min-width: 0;
+  min-height: 0;
+}
+
+.spork-details-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.spork-details-id,
+.spork-runrail-node {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.spork-details-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 8px 0;
+}
+
+.spork-details-tabs button.active {
+  border-color: #3b82f6;
+}
+
+.spork-runrail {
+  border-top: 1px solid var(--border);
+  background: var(--panel-bg);
+  max-height: 160px;
+  overflow: auto;
+  padding: 6px 10px;
+}
+
+.spork-runrail-log,
+.spork-conversation-log {
+  white-space: pre-wrap;
+  font-family: ui-monospace, monospace;
+  margin: 0;
+}
+
+.spork-muted {
+  color: var(--muted);
+}
+
+.spork-results {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 12px;
+}
+
+.spork-results dt {
+  color: var(--muted);
+}
+
+.spork-diff-paths {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+}

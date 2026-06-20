@@ -1,0 +1,43 @@
+{
+  // Spork F3-UI debug configurations (DESIGN.md §14.1).
+  //
+  // "Tauri Development Debug" builds + launches the Tauri dev binary (which runs
+  // the Vite dev server via tauri.conf.json's beforeDevCommand and embeds the
+  // daemon). Running the WINDOW needs a display, which the user provides. The
+  // `preLaunchTask` ensures the frontend is built first.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Tauri Development Debug",
+      "cargo": {
+        "args": [
+          "build",
+          "--manifest-path=./app/src-tauri/Cargo.toml",
+          "--no-default-features"
+        ]
+      },
+      "preLaunchTask": "ui:dev-build",
+      "env": {
+        "PATH": "${env:HOME}/.cargo/bin:${env:PATH}"
+      }
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Tauri Production Debug",
+      "cargo": {
+        "args": [
+          "build",
+          "--release",
+          "--manifest-path=./app/src-tauri/Cargo.toml"
+        ]
+      },
+      "preLaunchTask": "ui:build",
+      "env": {
+        "PATH": "${env:HOME}/.cargo/bin:${env:PATH}"
+      }
+    }
+  ]
+}

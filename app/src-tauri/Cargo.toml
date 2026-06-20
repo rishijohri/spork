@@ -1,0 +1,45 @@
+# Spork F3-UI Tauri backend (DESIGN.md §14.1).
+#
+# This is a STANDALONE cargo workspace (its own empty [workspace] table) so it
+# can NEVER break the 27-crate core workspace green-bar (CLAUDE.md C2/C3). The
+# ROOT Cargo.toml excludes `app/src-tauri`; this crate path-depends on the
+# frozen F3 daemon + IPC crates via `../../crates`.
+[workspace]
+
+[package]
+name = "spork-app"
+version = "0.1.0"
+edition = "2021"
+description = "Spork F3-UI: the Tauri v2 desktop backend embedding the spork-daemon behind the frozen F3 IPC (DESIGN.md §14.1)."
+# A binary `spork-app` plus a lib so the Tauri mobile entrypoint convention works
+# and the command handlers are unit-testable.
+
+[lib]
+name = "spork_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "spork-app"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# The frozen F3 daemon + IPC, path-depended from the core workspace. These are
+# the ONLY core crates the renderer's single mutation/read path needs.
+spork-daemon = { path = "../../crates/spork-daemon" }
+spork-ipc = { path = "../../crates/spork-ipc" }
+
+[dev-dependencies]
+# The no-display backend tests open a real daemon over a temp dir to prove the
+# embed + serialization seam runs.
+tempfile = "3"
+
+[features]
+# A default-empty feature set; `custom-protocol` is the Tauri release convention.
+custom-protocol = ["tauri/custom-protocol"]

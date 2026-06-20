@@ -1,0 +1,60 @@
+{
+  // Spork F3-UI VS Code tasks (DESIGN.md §14.1).
+  //
+  // These back the launch configs' preLaunchTask hooks and give the user
+  // one-click build/test/dev entry points from the Command Palette
+  // (Tasks: Run Task).
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "ui:install",
+      "type": "shell",
+      "command": "npm install",
+      "options": { "cwd": "${workspaceFolder}/app" },
+      "problemMatcher": []
+    },
+    {
+      "label": "ui:dev-build",
+      "type": "shell",
+      "command": "npm run build",
+      "options": { "cwd": "${workspaceFolder}/app" },
+      "problemMatcher": ["$tsc"],
+      "group": "build"
+    },
+    {
+      "label": "ui:build",
+      "type": "shell",
+      "command": "npm run build",
+      "options": { "cwd": "${workspaceFolder}/app" },
+      "problemMatcher": ["$tsc"],
+      "group": "build"
+    },
+    {
+      "label": "ui:test",
+      "type": "shell",
+      "command": "npm test",
+      "options": { "cwd": "${workspaceFolder}/app" },
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "ui:tauri-dev",
+      "type": "shell",
+      "command": "npm run tauri:dev",
+      "options": {
+        "cwd": "${workspaceFolder}/app",
+        "env": { "PATH": "${env:HOME}/.cargo/bin:${env:PATH}" }
+      },
+      "problemMatcher": [],
+      "detail": "Run the Tauri dev window (needs a display)."
+    },
+    {
+      "label": "ui:check",
+      "type": "shell",
+      "command": "./scripts/check.sh",
+      "options": { "cwd": "${workspaceFolder}/app" },
+      "problemMatcher": [],
+      "detail": "Full no-display verification: build + test + cargo build/clippy."
+    }
+  ]
+}

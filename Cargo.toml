@@ -30,6 +30,13 @@ members = [
     "crates/spork-nodes",
 ]
 
+# The Tauri desktop app (F3-UI) is a SEPARATE, standalone cargo workspace under
+# app/src-tauri (it declares its own empty [workspace] table). Excluding it here
+# guarantees the 27-crate core workspace green-bar can never be broken by the
+# additive UI slice (CLAUDE.md C2/C3; DESIGN.md §14.1). Build the app from
+# app/src-tauri, never from this root.
+exclude = ["app/src-tauri"]
+
 # Shared external dependencies pinned once here so every member crate resolves
 # to the same version. Member crates reference these with `workspace = true`.
 [workspace.dependencies]
