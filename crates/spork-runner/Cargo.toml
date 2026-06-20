@@ -1,0 +1,29 @@
+[package]
+name = "spork-runner"
+version = "0.1.0"
+edition = "2021"
+description = "Spork F4 result-normalization seam: the versioned ResultEnvelope, Runner SPI, metric-id registry, inputDigest cache, and the v1 SanityRunner (DESIGN §8.1, §8.2, §4.4)."
+
+[dependencies]
+spork-exec = { path = "../spork-exec" }
+spork-cas = { path = "../spork-cas" }
+spork-hash = { path = "../spork-hash" }
+spork-canon = { path = "../spork-canon" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+globset = { workspace = true }
+# A `ResultEnvelope.run_id` is a ULID (lexicographically sortable, time-ordered)
+# to match the node/edge/lease identity scheme used across F1-F4 (spork-log,
+# spork-graph, spork-exec). The `serde` feature lets an envelope round-trip
+# through the durable, content-addressed result store.
+ulid = { workspace = true, features = ["serde"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+# The end-to-end tests wire a real `WorktreeCowBackend` over the CAS + asset
+# stack and capture a snapshot via the deps-excluded ignore matcher, so they
+# need these three F0 crates directly (they are otherwise only transitive deps of
+# spork-exec). No network clients are introduced.
+spork-asset = { path = "../spork-asset" }
+spork-ignore = { path = "../spork-ignore" }

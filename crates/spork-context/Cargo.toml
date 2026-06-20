@@ -1,0 +1,19 @@
+[package]
+name = "spork-context"
+version = "0.1.0"
+edition = "2021"
+description = "Spork F4 context seam: frozen ContextLayer volatility ranks, ContextPolicy, the v1 ContextCompiler (prefix_hash cache reuse) and v1 HandoffGenerator/HandoffDocument (DESIGN §13.2, §13.5, §13.6)."
+
+[dependencies]
+spork-graph = { path = "../spork-graph" }
+spork-provider = { path = "../spork-provider" }
+spork-hash = { path = "../spork-hash" }
+spork-canon = { path = "../spork-canon" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+ulid = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+spork-log = { path = "../spork-log" }

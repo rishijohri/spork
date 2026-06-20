@@ -1,0 +1,15 @@
+[package]
+name = "spork-provider"
+version = "0.1.0"
+edition = "2021"
+description = "Spork F4 model seam: ProviderAdapter port + CanonicalTranscript, ProviderProjection, single-provider ModelRouter, the native AnthropicAdapter mapping (no HTTP), CapabilitySet and PrivacyClass (DESIGN §5.4, §12.1-§12.3)."
+
+[dependencies]
+spork-hash = { path = "../spork-hash" }
+spork-canon = { path = "../spork-canon" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

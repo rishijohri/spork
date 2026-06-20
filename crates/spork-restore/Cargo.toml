@@ -29,3 +29,10 @@ spork-graph = { path = "../spork-graph" }
 spork-log = { path = "../spork-log" }
 spork-hash = { path = "../spork-hash" }
 ulid = { workspace = true, features = ["serde"] }
+# Test-only cross-seam (F4 DoD c): build a real F4 CanonicalTranscript, round-trip
+# it through the AnthropicAdapter wire mapping, content-address it via the F0
+# canonical encoder, and prove it binds to a snapshot and restores with its code.
+# These are not library dependencies — `spork-restore` itself stays agnostic of
+# the F4 transcript schema, holding the conversation only by an opaque CAS ref.
+spork-provider = { path = "../spork-provider" }
+spork-canon = { path = "../spork-canon" }

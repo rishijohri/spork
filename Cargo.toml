@@ -22,6 +22,11 @@ members = [
     "crates/spork-restore",
     "crates/spork-git",
     "crates/spork-daemon",
+    "crates/spork-exec",
+    "crates/spork-runner",
+    "crates/spork-provider",
+    "crates/spork-context",
+    "crates/spork-merge",
 ]
 
 # Shared external dependencies pinned once here so every member crate resolves

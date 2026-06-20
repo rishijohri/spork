@@ -1375,18 +1375,23 @@ Enforced mechanically on every PR, not by review discretion:
 ```yaml
 no-stub-gate:
   forbid_in_shipped_paths:           # src/**, excludes tests/, benches/, examples/
-    - 'todo!()' | 'unimplemented!()' | 'unreachable!()'  # Rust macros
+    - 'todo!()' | 'unimplemented!()' | 'unreachable!()'  # Rust macros — HARD, everywhere
     - 'panic!("not implemented' | '.unwrap() // TODO'
-    - 'TODO' | 'FIXME' | 'STUB' | 'XXX' in committed source
+    - comment markers '// TODO|FIXME|STUB|XXX'           # COMMENT form only, not string literals
     - 'throw new Error("not implemented")'               # TS sidecar/renderer
   require:
     - every `trait`/port has >=1 non-test impl registered    # no empty seams
     - every persisted struct: a schema_version field + a registered migration
     - golden vectors present & unchanged (or a version bump + changelog entry)
     - property + crash suites green; §7.5 budget benches within threshold
+  exclude:
+    - crates/spork-runner/**          # the SanityRunner DETECTS TODO/FIXME/XXX in user code:
+                                      # those tokens are its pattern DATA (default forbid lists,
+                                      # rule_ids like "forbid-pattern:FIXME", doc examples, fixtures),
+                                      # not stub markers. The macro ban still applies to it.
 ```
 
-The `unimplemented!()`/`todo!()`/`TODO`/`FIXME` ban applies to **shipped paths only** (`src/**`); test scaffolding and `examples/` are exempt. A genuinely-deferred item is allowed **only** as an explicit, documented out-of-scope (e.g. live CRDT co-editing, runtime-state reconciliation in P9, §19.6) — named in the design and absent from shipped code, never a silent stub.
+The stub-MACRO ban (`todo!()`/`unimplemented!()`/`unreachable!()`) is the hard, unambiguous gate and applies to **every** crate (verified empty across the workspace). The `TODO`/`FIXME`/`XXX`/`STUB` token scan applies to **comment markers in shipped paths only** (`src/**`; tests/benches/examples exempt) and **excludes `spork-runner`**, whose entire purpose is to find those patterns in user code — so they appear there as legitimate data, never as deferral. A genuinely-deferred item is allowed **only** as an explicit, documented out-of-scope (e.g. live CRDT co-editing / runtime-state reconciliation in P9 §19.6; the Tauri/React `F3-UI` in §11.5) — named in the design and absent from shipped code, never a silent stub.
 
 ### 8.4 Why This Yields No-Stub, No-Domino
 

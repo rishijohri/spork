@@ -1,0 +1,15 @@
+{
+  "id": "msg_02",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-3-5-sonnet",
+  "stop_reason": "end_turn",
+  "content": [
+    {
+      "type": "thinking",
+      "thinking": "The user wants a greeting. I should keep it short.",
+      "signature": "sig_abc"
+    },
+    { "type": "text", "text": "Hello!" }
+  ]
+}

@@ -977,6 +977,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "spork-context"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "spork-canon",
+ "spork-graph",
+ "spork-hash",
+ "spork-log",
+ "spork-provider",
+ "tempfile",
+ "thiserror",
+ "ulid",
+]
+
+[[package]]
 name = "spork-daemon"
 version = "0.1.0"
 dependencies = [
@@ -1034,6 +1050,22 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "thiserror",
+ "ulid",
+]
+
+[[package]]
+name = "spork-exec"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "spork-asset",
+ "spork-canon",
+ "spork-cas",
+ "spork-hash",
+ "spork-ignore",
+ "tempfile",
  "thiserror",
  "ulid",
 ]
@@ -1132,6 +1164,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "spork-merge"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "spork-canon",
+ "spork-hash",
+ "spork-provider",
+ "thiserror",
+]
+
+[[package]]
 name = "spork-migrate"
 version = "0.1.0"
 dependencies = [
@@ -1156,6 +1200,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "spork-provider"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "spork-canon",
+ "spork-hash",
+ "thiserror",
+]
+
+[[package]]
 name = "spork-registry"
 version = "0.1.0"
 dependencies = [
@@ -1172,11 +1227,31 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "spork-canon",
  "spork-cas",
  "spork-graph",
  "spork-hash",
  "spork-ignore",
  "spork-log",
+ "spork-provider",
+ "tempfile",
+ "thiserror",
+ "ulid",
+]
+
+[[package]]
+name = "spork-runner"
+version = "0.1.0"
+dependencies = [
+ "globset",
+ "serde",
+ "serde_json",
+ "spork-asset",
+ "spork-canon",
+ "spork-cas",
+ "spork-exec",
+ "spork-hash",
+ "spork-ignore",
  "tempfile",
  "thiserror",
  "ulid",

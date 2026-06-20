@@ -1,0 +1,24 @@
+[package]
+name = "spork-exec"
+version = "0.1.0"
+edition = "2021"
+description = "Spork F4 execution seam: IsolationBackend + WorktreeCow v1 over spork-cas, ResourceProfile/Lease/Reaper, serial Scheduler v1, and the hashed EnvManifest (DESIGN §5.3, §11.1-§11.3, §4.10)."
+
+[dependencies]
+spork-cas = { path = "../spork-cas" }
+spork-asset = { path = "../spork-asset" }
+spork-hash = { path = "../spork-hash" }
+spork-canon = { path = "../spork-canon" }
+# `capture_path` content-addresses a subtree via `ObjectStore::put_tree`, which
+# takes the F0-frozen deps-excluded ignore matcher (DESIGN §10.5).
+spork-ignore = { path = "../spork-ignore" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+# `Lease.id` is a ULID (lexicographically sortable, time-ordered) to match the
+# node/edge identity scheme used across F1/F2 (spork-log, spork-graph). The
+# `serde` feature lets a lease record round-trip through the durable ledger.
+ulid = { workspace = true, features = ["serde"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }

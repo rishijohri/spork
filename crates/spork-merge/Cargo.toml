@@ -1,0 +1,16 @@
+[package]
+name = "spork-merge"
+version = "0.1.0"
+edition = "2021"
+description = "Spork F4 merge schemas: the versioned ConflictResolution payload and SyntheticTranscript merge schema built from canonical transcripts, consumed by the P5 Merge node and P9 graft (DESIGN §6.5, A.4)."
+
+[dependencies]
+spork-provider = { path = "../spork-provider" }
+spork-hash = { path = "../spork-hash" }
+# Canonical (byte-stable) serialization is needed to content-address a
+# SyntheticTranscript / ConflictResolution. It is a pure, offline, no-network
+# F0 primitive; preferred from the workspace path like every other member.
+spork-canon = { path = "../spork-canon" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

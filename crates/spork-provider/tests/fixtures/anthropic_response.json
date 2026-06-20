@@ -1,0 +1,16 @@
+{
+  "id": "msg_01",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-3-5-sonnet",
+  "stop_reason": "tool_use",
+  "content": [
+    { "type": "text", "text": "Here is the answer." },
+    {
+      "type": "tool_use",
+      "id": "toolu_99",
+      "name": "write_file",
+      "input": { "path": "out.txt", "contents": "hi" }
+    }
+  ]
+}
