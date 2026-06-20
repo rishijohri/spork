@@ -1,0 +1,22 @@
+[package]
+name = "spork-asset"
+version = "0.1.0"
+edition = "2021"
+description = "AssetStore seam (AssetKey/AssetRef) and the LocalCas implementation backed by spork-cas."
+
+[dependencies]
+spork-hash = { path = "../spork-hash" }
+# The frozen canonical encoder: the opaque-asset content_hash is computed over
+# canonical bytes, the same identity path every other Spork object uses.
+spork-canon = { path = "../spork-canon" }
+spork-cas = { path = "../spork-cas" }
+# spork-cas::ObjectStore::put_tree takes an IgnoreMatcher; an opaque asset is
+# captured verbatim, so the asset store builds an empty (ignore-nothing) profile.
+spork-ignore = { path = "../spork-ignore" }
+reflink-copy = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

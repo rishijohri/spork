@@ -1,0 +1,30 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/spork-hash",
+    "crates/spork-canon",
+    "crates/spork-ignore",
+    "crates/spork-cas",
+    "crates/spork-asset",
+    "crates/spork-cas-cli",
+]
+
+# Shared external dependencies pinned once here so every member crate resolves
+# to the same version. Member crates reference these with `workspace = true`.
+[workspace.dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+thiserror = "2.0.18"
+blake3 = "1.8.5"
+hex = "0.4.3"
+globset = "0.4.18"
+fastcdc = "4.0.1"
+rayon = "1.11.0"
+reflink-copy = "0.1.30"
+walkdir = "2.5.0"
+clap = { version = "4.6.1", features = ["derive"] }
+anyhow = "1.0.102"
+
+# Dev-only shared dependencies.
+proptest = "1.11.0"
+tempfile = "3.27.0"

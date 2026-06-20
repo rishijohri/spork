@@ -1,0 +1,15 @@
+[package]
+name = "spork-hash"
+version = "0.1.0"
+edition = "2021"
+description = "BLAKE3 identity primitives: self-describing HashTag and ObjectId for Spork's content-addressed substrate."
+
+[dependencies]
+blake3 = { workspace = true }
+hex = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+proptest = { workspace = true }

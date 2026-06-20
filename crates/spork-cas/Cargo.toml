@@ -1,0 +1,20 @@
+[package]
+name = "spork-cas"
+version = "0.1.0"
+edition = "2021"
+description = "Spork content-addressed store: Blob/Tree/Snapshot object model, StorageBackend (loose + pack), and FastCDC chunking."
+
+[dependencies]
+spork-hash = { path = "../spork-hash" }
+spork-canon = { path = "../spork-canon" }
+spork-ignore = { path = "../spork-ignore" }
+fastcdc = { workspace = true }
+rayon = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+walkdir = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+tempfile = { workspace = true }

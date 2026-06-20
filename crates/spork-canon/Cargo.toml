@@ -1,0 +1,10 @@
+[package]
+name = "spork-canon"
+version = "0.1.0"
+edition = "2021"
+description = "Frozen canonical-serialization encoder: deterministic byte-exact JSON for Spork content identity."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

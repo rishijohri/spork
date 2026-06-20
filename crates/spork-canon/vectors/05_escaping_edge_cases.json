@@ -1,0 +1,13 @@
+{
+  "quote": "a\"b",
+  "backslash": "a\\\\b",
+  "newline": "line1\nline2",
+  "tab": "a\tb",
+  "cr": "a\rb",
+  "backspace": "a\bb",
+  "formfeed": "a\fb",
+  "null_char": "a\u0000b",
+  "unit_sep": "a\u001fb",
+  "forward_slash": "a/b",
+  "combo": "q=\"\\\\\"\n\t"
+}

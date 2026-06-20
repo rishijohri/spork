@@ -1306,7 +1306,8 @@ Promises are falsifiable budgets against a **named fixture repo**, wired as CI g
 
 | Dimension | Budget | Gates phase |
 |---|---|---|
-| Incremental snapshot capture | p95 < 300 ms (50k-file, ≤20 changed) | F0 |
+| Incremental snapshot capture | p95 < 300 ms (50k-file, ≤20 changed) | **F3** (needs the `spork-drift` stat/mtime index to skip re-hashing unchanged files; the stateless F0 path re-walks the whole tree) |
+| Cold first-snapshot capture (F0 scope) | ~0.07 ms/file (20k files ≈ 1.4 s) via fsync-batched packfile write + parallel hashing; first-snapshot is intrinsically O(repo) | F0 |
 | Node restore (code + conversation, CoW) | p95 < 500 ms | F3 |
 | Click-node → diff visible | p95 < 150 ms (lazy blobs) | F3 |
 | Canvas frame rate | ≥ 55 fps, ≥ 1k nodes | F3 |

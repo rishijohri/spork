@@ -1,0 +1,20 @@
+[package]
+name = "spork-cas-cli"
+version = "0.1.0"
+edition = "2021"
+description = "spork-cas command-line tool: put-tree / cat / chunk-stats / verify-roundtrip / gen-fixture."
+
+[[bin]]
+name = "spork-cas"
+path = "src/main.rs"
+
+[dependencies]
+spork-cas = { path = "../spork-cas" }
+spork-hash = { path = "../spork-hash" }
+spork-ignore = { path = "../spork-ignore" }
+clap = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+walkdir = { workspace = true }
+tempfile = { workspace = true }
