@@ -71,6 +71,10 @@ export type ConnectionState =
   | "connected"
   | "reconnecting"
   | "disconnected"
+  // First-run: the daemon is alive but no project is open yet (graph_view
+  // returns "no project open"). Distinct from a real disconnection so onboarding
+  // shows instead of an alarming "Lost connection" banner.
+  | "no-project"
   | "mock";
 
 /** Layout density (Settings → §5.13). */

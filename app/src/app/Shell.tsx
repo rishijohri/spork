@@ -40,12 +40,15 @@ export function Shell(): JSX.Element {
     if (graph.data) setView(graph.data);
   }, [graph.data, setView]);
 
-  // Connection state: browser (no Tauri) = mock; a read error = disconnected.
+  // Connection state: browser (no Tauri) = mock; a "no project open" read error
+  // is first-run onboarding (the daemon is alive, it just has no project) — NOT a
+  // disconnection; any other read error = disconnected.
   useEffect(() => {
     if (!isTauri()) setConnection("mock");
-    else if (graph.isError) setConnection("disconnected");
-    else if (graph.data) setConnection("connected");
-  }, [graph.isError, graph.data, setConnection]);
+    else if (graph.isError) {
+      setConnection(isNoProjectError(graph.error) ? "no-project" : "disconnected");
+    } else if (graph.data) setConnection("connected");
+  }, [graph.isError, graph.error, graph.data, setConnection]);
 
   // Apply the density preference to the document element.
   useEffect(() => {
@@ -103,6 +106,12 @@ export function Shell(): JSX.Element {
           </button>
         </div>
       )}
+      {connection === "no-project" && (
+        <div className="spork-banner spork-banner--info" role="status">
+          <Icon name="git-branch" size={15} />
+          <span>No project open — open one to begin (the canvas below has the picker).</span>
+        </div>
+      )}
       <div
         className="spork-main"
         data-nav={navCollapsed ? "collapsed" : "expanded"}
@@ -128,4 +137,17 @@ export function Shell(): JSX.Element {
       <CommandPalette />
     </div>
   );
+}
+
+/**
+ * Whether a `graph_view` read error is the benign first-run "no project open"
+ * condition (the daemon is alive but no project has been opened) rather than a
+ * real disconnection. The Tauri backend rejects with the string "no project
+ * open" until `open_project` runs; the rejection reaches us as a string or an
+ * Error, so we stringify defensively.
+ */
+export function isNoProjectError(error: unknown): boolean {
+  const text =
+    error instanceof Error ? error.message : typeof error === "string" ? error : String(error);
+  return /no project open/i.test(text);
 }

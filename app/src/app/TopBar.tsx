@@ -32,6 +32,7 @@ const CONN_LABEL: Record<string, string> = {
   connected: "Daemon connected",
   reconnecting: "Reconnecting…",
   disconnected: "Daemon disconnected",
+  "no-project": "No project open",
   mock: "Browser mock mode",
 };
 

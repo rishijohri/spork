@@ -13,6 +13,7 @@ const CONN_LABEL: Record<string, string> = {
   connected: "connected",
   reconnecting: "reconnecting…",
   disconnected: "disconnected",
+  "no-project": "no project open",
   mock: "mock mode",
 };
 

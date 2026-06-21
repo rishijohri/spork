@@ -780,6 +780,12 @@ textarea:focus-visible {
 .spork-banner .spork-banner-spacer {
   flex: 1;
 }
+/* The first-run "no project open" banner is informational, not an alarm. */
+.spork-banner--info {
+  background: #0f2030;
+  border-bottom-color: #1d4163;
+  color: #8ab8e6;
+}
 
 /* ------------------------------------------------------------------ details */
 
