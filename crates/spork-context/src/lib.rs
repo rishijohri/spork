@@ -89,6 +89,7 @@ mod compiler;
 mod error;
 mod handoff;
 mod layer;
+mod lineage;
 mod policy;
 mod source;
 mod trace;
@@ -106,7 +107,10 @@ pub use layer::{
     estimate_tokens, volatility_rank, ContextLayer, ContextLayerKind, CONTEXT_LAYER_SCHEMA_VERSION,
     PREFIX_MAX_RANK,
 };
-pub use policy::{AncestorStrategy, ContextPolicy, Degrade, CONTEXT_POLICY_SCHEMA_VERSION};
+pub use lineage::{GraphLineageWalker, LineageCompiler, LineageWalker};
+pub use policy::{
+    policy_for, AncestorStrategy, ContextPolicy, Degrade, CONTEXT_POLICY_SCHEMA_VERSION,
+};
 pub use source::{
     AncestorText, ContextSource, GraphHandoffSource, HandoffDistillation, HandoffMaterials,
     HandoffSource, NodeMaterials,

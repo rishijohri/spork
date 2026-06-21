@@ -18,7 +18,7 @@ import { dispatch } from "../ipc/client";
 import { Icon } from "../ui/icons";
 import { IconButton } from "../ui/Button";
 import { shortId, humanizeModel, formatMicroUsd, effectiveStatus } from "../ui/format";
-import type { NodeView } from "../ipc/types";
+import type { Command, NodeView } from "../ipc/types";
 
 const DiffEditor = lazy(async () => {
   const mod = await import("@monaco-editor/react");
@@ -283,6 +283,29 @@ function InfoTab({
             <span className="spork-faint">—</span>
           )}
         </dd>
+        {node.gate && (
+          <>
+            <dt>Gate</dt>
+            <dd>
+              <span
+                className="spork-gate"
+                data-decision={node.gate.decision}
+                title={node.gate.reasons.join("\n")}
+              >
+                <Icon name="gate" size={11} />
+                {node.gate.decision}
+                {node.gate.overridden && (
+                  <span className="spork-faint"> · overridden</span>
+                )}
+              </span>
+              {node.gate.reasons.length > 0 && (
+                <div className="spork-gate-reasons spork-faint">
+                  {node.gate.reasons[0]}
+                </div>
+              )}
+            </dd>
+          </>
+        )}
         <dt>Snapshot</dt>
         <dd>
           {node.ownsSnapshot ? (
@@ -305,12 +328,116 @@ function InfoTab({
           )}
         </dd>
       </dl>
+      <LineagePanel node={node} />
       <p className="spork-fwd-note">
-        Live conversation streaming (needs a streaming transport), detailed results
-        &amp; run history (P7), handoff, and effects-log surfaces are designed but
-        not yet built — see UI_UX_DESIGN.md §14. Per-node model + cost are live
-        (P6); a check's pass/fail shows on its canvas card today.
+        Live conversation streaming (needs a streaming transport) and the
+        effects-log surface are designed but not yet built — see UI_UX_DESIGN.md
+        §14. Per-node model + cost (P6), gate verdicts, lineage-aware context,
+        handoff docs, and the read-only Lineage/History MCP are live (P7).
       </p>
     </>
+  );
+}
+
+/**
+ * The P7 lineage panel: read-only "expand context" affordances (DESIGN §13.2,
+ * §13.5, §13.7). Each button dispatches a read command and renders its inline
+ * result — the cache-aligned context's `prefix_hash` + selection trace, the
+ * regenerable handoff, and the History MCP tool surface.
+ */
+function LineagePanel({ node }: { node: NodeView }): JSX.Element {
+  const [result, setResult] = useState<{ label: string; lines: string[] } | null>(
+    null,
+  );
+  const [busy, setBusy] = useState(false);
+
+  const run = (label: string, command: Command, render: (data: unknown) => string[]) => {
+    setBusy(true);
+    dispatch(command)
+      .then((res) => {
+        const data = res.result === "READ" ? res.data : res;
+        setResult({ label, lines: render(data) });
+      })
+      .catch((e) => setResult({ label, lines: [`error: ${String(e)}`] }))
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <div className="spork-lineage-panel">
+      <div className="spork-lineage-actions">
+        <button
+          disabled={busy}
+          onClick={() =>
+            run("Context", { command: "NODE_CONTEXT", nodeId: node.id }, (d) => {
+              const ctx = d as {
+                prefixHash?: string;
+                layerCount?: number;
+                selectionTrace?: { reason?: string }[];
+              };
+              return [
+                `prefix_hash ${shortId(ctx.prefixHash ?? "")}`,
+                `${ctx.layerCount ?? 0} layers`,
+                ...(ctx.selectionTrace ?? [])
+                  .slice(0, 3)
+                  .map((t) => `· ${t.reason ?? ""}`),
+              ];
+            })
+          }
+        >
+          Explain context
+        </button>
+        <button
+          disabled={busy}
+          onClick={() =>
+            run("Handoff", { command: "NODE_HANDOFF", nodeId: node.id }, (d) => {
+              const h = d as { summary?: string; files_touched?: { path?: string }[] };
+              return [
+                h.summary ?? "(no summary)",
+                ...(h.files_touched ?? []).map((f) => `· ${f.path ?? ""}`),
+              ];
+            })
+          }
+        >
+          Handoff
+        </button>
+        <button
+          disabled={busy}
+          onClick={() =>
+            run(
+              "Lineage history",
+              {
+                command: "HISTORY_QUERY",
+                request: {
+                  jsonrpc: "2.0",
+                  id: 1,
+                  method: "tools/call",
+                  params: {
+                    name: "walk_ancestors",
+                    arguments: { nodeId: node.id },
+                  },
+                },
+              },
+              (d) => {
+                const r = d as { result?: { content?: { text?: string }[] } };
+                const text = r.result?.content?.[0]?.text ?? "[]";
+                return [`walk_ancestors → ${text.slice(0, 80)}`];
+              },
+            )
+          }
+        >
+          Lineage history
+        </button>
+      </div>
+      {result && (
+        <div className="spork-lineage-result">
+          <strong>{result.label}</strong>
+          {result.lines.map((l, i) => (
+            <div key={i} className="spork-faint">
+              {l}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

@@ -47,6 +47,7 @@ function seedView(): GraphView {
         parentIds: [],
         model: "gpt-4o",
         cost: null,
+        gate: null,
       },
     ],
     edges: [],

@@ -68,6 +68,24 @@ export interface NodeView {
   model: string | null;
   /** The per-node cost (P6), or null. The per-branch ledger sums these. */
   cost: CostView | null;
+  /** The gate verdict this node carries (P7, gate nodes only), or null. */
+  gate: GateVerdictView | null;
+}
+
+/** The renderer-facing projection of a gate verdict (P7, DESIGN §8.3). */
+export interface GateVerdictView {
+  policyId: string;
+  /** The gated transition (`merge`, `promote-branch`, …). */
+  transition: string;
+  /** `pass` | `warn` | `blocked` | `overridden`. */
+  decision: "pass" | "warn" | "blocked" | "overridden";
+  /** `block` | `warn`. */
+  severity: "block" | "warn";
+  reasons: string[];
+  /** The lineage hash of the snapshot the verdict was computed against (hex). */
+  lineageHash: string;
+  /** Whether the verdict was overridden (a visible audit). */
+  overridden: boolean;
 }
 
 /** The renderer-facing projection of a node's cost (P6, DESIGN §12.5). */
@@ -151,7 +169,29 @@ export type Command =
       modelKey: string;
       privacy: string;
       intent: AgentRunIntent;
-    };
+    }
+  // P7 gated merge (DESIGN.md §8.3, A.4). A mutation: 3-way merge → re-run
+  // observers → evaluate `gate` (a serialized spork-gates GatePolicy) vs the
+  // optional `baseline` (a serialized spork-baseline Baseline) → attach a gate
+  // verdict node and promote the ref only if allowed. `overrideReason` promotes
+  // a blocked merge with a recorded audit.
+  | {
+      command: "BRANCH_MERGE_GATED";
+      intoRef: string;
+      fromNodeId: Ulid;
+      resolution: unknown | null;
+      gate: unknown;
+      baseline: unknown | null;
+      overrideReason: string | null;
+    }
+  // P7 historical checkout with fork-on-divergence (DESIGN.md §6.6). A mutation.
+  | { command: "NODE_CHECKOUT"; nodeId: Ulid }
+  // P7 reads (DESIGN.md §13.x). NODE_CONTEXT compiles lineage-aware context;
+  // NODE_HANDOFF distills a handoff; HISTORY_QUERY is a JSON-RPC request to the
+  // read-only Lineage/History MCP. All reply inline as `READ`.
+  | { command: "NODE_CONTEXT"; nodeId: Ulid }
+  | { command: "NODE_HANDOFF"; nodeId: Ulid }
+  | { command: "HISTORY_QUERY"; request: unknown };
 
 /** The command tag literal type, for exhaustive switching. */
 export type CommandTag = Command["command"];
@@ -168,7 +208,10 @@ export type CommandResult =
   // are action-shaped, not mutations): the branch the snapshot was projected to,
   // the commit SHA, and whether it was pushed. Field casing matches the Rust
   // serde `rename_all_fields = "camelCase"` (commitSha).
-  | { result: "GIT"; branch: string; commitSha: string; pushed: boolean };
+  | { result: "GIT"; branch: string; commitSha: string; pushed: boolean }
+  // The reply to the P7 read commands NODE_CONTEXT / NODE_HANDOFF /
+  // HISTORY_QUERY: structured read-only JSON returned inline (DESIGN.md §13.x).
+  | { result: "READ"; data: unknown };
 
 // --- Op-log events (crates/spork-ipc/src/event.rs) ----------------------------
 //
@@ -188,7 +231,10 @@ export type OpLogEvent =
   | { type: "GC_PERFORMED"; seq: number }
   | { type: "RESULT_RECORDED"; seq: number; runId: Ulid; nodeId: Ulid }
   | { type: "MERGE_PERFORMED"; seq: number; nodeId: Ulid }
-  | { type: "CHECK_SCHEDULED"; seq: number; runId: Ulid };
+  | { type: "CHECK_SCHEDULED"; seq: number; runId: Ulid }
+  // P7 additive events (DESIGN.md §8.3, §6.6).
+  | { type: "GATE_EVALUATED"; seq: number; nodeId: Ulid }
+  | { type: "CHECKOUT_PERFORMED"; seq: number; nodeId: Ulid };
 
 /** The op-log event tag literal type. */
 export type OpLogEventTag = OpLogEvent["type"];

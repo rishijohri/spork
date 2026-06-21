@@ -1,0 +1,16 @@
+[package]
+name = "spork-baseline"
+version = "0.1.0"
+edition = "2021"
+description = "Spork P7 baselines & flaky handling: correctness expected-pass sets, perf metric distributions + integer tolerances, flakiness scoring keyed by input_digest, bounded retry + quorum + quarantine (DESIGN §8.3, A.2)."
+
+[dependencies]
+spork-runner = { path = "../spork-runner" }
+spork-hash = { path = "../spork-hash" }
+spork-canon = { path = "../spork-canon" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+ulid = { workspace = true }

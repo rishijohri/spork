@@ -99,6 +99,14 @@ const BUILTIN_UI_CONTRIBUTIONS: Readonly<
     displayName: "Agent",
     family: "context",
   },
+  // P7: a gated merge attaches an immutable gate-verdict node (DESIGN §8.3).
+  // Matches the daemon's gate_descriptor ui_contributions.
+  gate: {
+    color: "#f59e0b",
+    icon: "gate",
+    displayName: "Gate",
+    family: "observing",
+  },
 };
 
 /**

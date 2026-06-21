@@ -83,6 +83,60 @@ pub struct NodeView {
     /// Additive view field (CLAUDE.md C5) — `None` for every node that carries
     /// no cost, exactly as before.
     pub cost: Option<CostView>,
+    /// The gate verdict this node carries, if it is a gate-verdict node (P7,
+    /// DESIGN §8.3). Additive view field (CLAUDE.md C5) — `None` for every
+    /// non-gate node, exactly as before.
+    pub gate: Option<GateVerdictView>,
+}
+
+/// The renderer-facing projection of a gate verdict (P7, DESIGN §8.3).
+///
+/// A camelCase mirror of the `spork-gates` `GateVerdict` for the TypeScript
+/// binding: the decision badge, the severity, the explaining reasons, and the
+/// override audit (if the verdict was overridden). The `lineageHash` is the
+/// snapshot the verdict was computed against — what makes it travel with the
+/// snapshot (DESIGN §8.3, PLAN §9 D-12).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GateVerdictView {
+    /// The policy that produced the verdict.
+    pub policy_id: String,
+    /// The gated transition (`merge`, `promote-branch`, …).
+    pub transition: String,
+    /// The decision (`pass` / `warn` / `blocked` / `overridden`).
+    pub decision: String,
+    /// The policy severity (`block` / `warn`).
+    pub severity: String,
+    /// The explaining reasons.
+    pub reasons: Vec<String>,
+    /// The lineage hash of the snapshot the verdict was computed against (hex).
+    pub lineage_hash: String,
+    /// Whether the verdict was overridden (a visible audit).
+    pub overridden: bool,
+}
+
+impl From<spork_gates::GateVerdict> for GateVerdictView {
+    fn from(v: spork_gates::GateVerdict) -> Self {
+        let decision = match v.decision {
+            spork_gates::Decision::Pass => "pass",
+            spork_gates::Decision::Warn => "warn",
+            spork_gates::Decision::Blocked => "blocked",
+            spork_gates::Decision::Overridden => "overridden",
+        };
+        let severity = match v.severity {
+            spork_gates::Severity::Block => "block",
+            spork_gates::Severity::Warn => "warn",
+        };
+        GateVerdictView {
+            policy_id: v.policy_id,
+            transition: v.transition.label().to_string(),
+            decision: decision.to_string(),
+            severity: severity.to_string(),
+            reasons: v.reasons,
+            lineage_hash: v.lineage_hash.to_hex(),
+            overridden: v.override_audit.is_some(),
+        }
+    }
 }
 
 /// The renderer-facing projection of a node's cost (P6, DESIGN §12.5).
@@ -177,6 +231,7 @@ mod tests {
                     parent_ids: vec![],
                     model: None,
                     cost: None,
+                    gate: None,
                 },
                 NodeView {
                     id: b,
@@ -194,6 +249,7 @@ mod tests {
                         output_tokens: 200,
                         micro_usd: 4_500,
                     }),
+                    gate: None,
                 },
             ],
             edges: vec![EdgeView {

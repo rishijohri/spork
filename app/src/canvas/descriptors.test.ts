@@ -40,12 +40,13 @@ describe("descriptorFor", () => {
     expect(d.family).toBe("context");
   });
 
-  it("exposes the built-in node types in the legend (incl. P6 agent-context)", () => {
-    expect(allDescriptors()).toHaveLength(7);
+  it("exposes the built-in node types in the legend (incl. P6 agent-context, P7 gate)", () => {
+    expect(allDescriptors()).toHaveLength(8);
     expect(Object.keys(BUILTIN_DESCRIPTORS).sort()).toEqual(
       [
         "agent-context",
         "codebase-edit",
+        "gate",
         "merge",
         "sanity",
         "snapshot",

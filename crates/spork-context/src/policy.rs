@@ -108,6 +108,38 @@ impl Default for ContextPolicy {
     }
 }
 
+/// The per-node-type [`ContextPolicy`] defaults (DESIGN.md §13.3).
+///
+/// Each node type carries a context policy: **Edit** nodes get a large hybrid
+/// budget with summarized ancestors; **Validation/Stress** get a managed,
+/// `handoff_only` budget; deterministic **Sanity** checks get near-zero model
+/// context; an **agent-context** observation gets a moderate handoff-only budget.
+/// Unknown kinds fall back to the Edit-shaped [`ContextPolicy::default`]. This is
+/// the additive P7 policy layer over the frozen F4 `ContextPolicy` shape
+/// (CLAUDE.md C3). Kind strings match the `spork-nodes` built-in kinds.
+#[must_use]
+pub fn policy_for(node_kind: &str) -> ContextPolicy {
+    match node_kind {
+        // Edit ("codebase-edit"): large hybrid budget, summarized lineage.
+        "codebase-edit" => {
+            ContextPolicy::new(64_000, AncestorStrategy::Summarize, Degrade::Compact)
+        }
+        // Validation / Stress: managed budget, handoff-only ancestors.
+        "validation" | "stress" => {
+            ContextPolicy::new(8_000, AncestorStrategy::HandoffOnly, Degrade::Compact)
+        }
+        // Sanity: near-zero model context, drop lineage entirely. Fail closed
+        // rather than compact so a misconfigured sanity check cannot silently
+        // balloon (DESIGN.md §13.3 "near-zero model context").
+        "sanity" => ContextPolicy::new(512, AncestorStrategy::Drop, Degrade::Fail),
+        // Agent-context observation: a moderate handoff-only budget.
+        "agent-context" => {
+            ContextPolicy::new(32_000, AncestorStrategy::HandoffOnly, Degrade::Compact)
+        }
+        _ => ContextPolicy::default(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -150,5 +182,29 @@ mod tests {
     fn policy_canonicalizes_integers_only() {
         let p = ContextPolicy::default();
         assert!(spork_canon::canonicalize(&p).is_ok());
+    }
+
+    #[test]
+    fn per_node_type_policy_defaults_match_design() {
+        // Edit: large hybrid, summarize.
+        let edit = policy_for("codebase-edit");
+        assert_eq!(edit.ancestor_strategy, AncestorStrategy::Summarize);
+        assert_eq!(edit.exploration_budget_tokens, 64_000);
+        // Validation/Stress: handoff-only, managed.
+        assert_eq!(
+            policy_for("validation").ancestor_strategy,
+            AncestorStrategy::HandoffOnly
+        );
+        assert_eq!(
+            policy_for("stress").ancestor_strategy,
+            AncestorStrategy::HandoffOnly
+        );
+        // Sanity: near-zero, drop lineage, fail-closed.
+        let sanity = policy_for("sanity");
+        assert_eq!(sanity.ancestor_strategy, AncestorStrategy::Drop);
+        assert!(sanity.exploration_budget_tokens <= 1024);
+        assert_eq!(sanity.degrade, Degrade::Fail);
+        // Unknown falls back to the Edit-shaped default.
+        assert_eq!(policy_for("made-up"), ContextPolicy::default());
     }
 }

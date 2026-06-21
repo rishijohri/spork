@@ -30,6 +30,7 @@ function view(): GraphView {
         parentIds: [],
         model: "openai/gpt-4o",
         cost: null,
+        gate: null,
       },
       {
         id: CHECK,
@@ -43,6 +44,7 @@ function view(): GraphView {
         parentIds: [EDIT],
         model: null,
         cost: null,
+        gate: null,
       },
     ],
     edges: [],

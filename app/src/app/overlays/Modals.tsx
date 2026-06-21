@@ -104,6 +104,7 @@ function AskAgentModal({ node, nodeId }: { node: NodeView | null; nodeId: string
         parentIds: [],
         model: strId(ids, "model", model),
         cost,
+        gate: null,
       };
       attachAgentNode(attached, nodeId);
       setResult({ model: attached.model ?? model, cost });
@@ -247,21 +248,46 @@ function NewBranchModal({ node, nodeId }: { node: NodeView | null; nodeId: strin
   );
 }
 
-/** Merge — BRANCH_MERGE (3-way; conflicts surface, no half-node). */
+/** Merge — BRANCH_MERGE (3-way), optionally through a P7 quality gate. */
 function MergeModal({ node, nodeId }: { node: NodeView | null; nodeId: string }): JSX.Element {
   const close = useClose();
   const view = useUiStore((s) => s.view);
   const { run } = useActions();
   const branches = view.refs.filter((r) => r.kind === "Branch");
   const [into, setInto] = useState(branches[0]?.name ?? "main");
+  const [gated, setGated] = useState(false);
   const [busy, setBusy] = useState(false);
 
   async function merge(): Promise<void> {
     setBusy(true);
-    const res = await run(
-      { command: "BRANCH_MERGE", intoRef: into, fromNodeId: nodeId, resolution: null },
-      { nodeId, label: "Merge" },
-    );
+    // The P7 gate: require all post-merge sanity checks to pass before promoting
+    // the branch ref (DESIGN §8.3). A blocking gate; an override is a separate
+    // explicit step (the daemon's overrideReason).
+    const gate = {
+      schemaVersion: 1,
+      id: "merge-sanity",
+      transition: "merge",
+      predicate: { predicate: "all_passed", args: { kind: "sanity" } },
+      severity: "block",
+      onFlaky: "block",
+    };
+    const command = gated
+      ? ({
+          command: "BRANCH_MERGE_GATED",
+          intoRef: into,
+          fromNodeId: nodeId,
+          resolution: null,
+          gate,
+          baseline: null,
+          overrideReason: null,
+        } as const)
+      : ({
+          command: "BRANCH_MERGE",
+          intoRef: into,
+          fromNodeId: nodeId,
+          resolution: null,
+        } as const);
+    const res = await run(command, { nodeId, label: gated ? "Gated merge" : "Merge" });
     setBusy(false);
     if (res) close();
   }
@@ -274,7 +300,9 @@ function MergeModal({ node, nodeId }: { node: NodeView | null; nodeId: string })
       footer={
         <>
           <Button variant="ghost" onClick={close}>Cancel</Button>
-          <Button variant="primary" busy={busy} onClick={() => void merge()}>Merge</Button>
+          <Button variant="primary" busy={busy} onClick={() => void merge()}>
+            {gated ? "Merge with gate" : "Merge"}
+          </Button>
         </>
       }
     >
@@ -292,6 +320,14 @@ function MergeModal({ node, nodeId }: { node: NodeView | null; nodeId: string })
           ))}
         </select>
       </div>
+      <label className="spork-checkbox">
+        <input
+          type="checkbox"
+          checked={gated}
+          onChange={(e) => setGated(e.target.checked)}
+        />
+        Run a quality gate (block promotion if post-merge sanity fails)
+      </label>
     </Modal>
   );
 }

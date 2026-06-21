@@ -83,10 +83,14 @@
 #![warn(missing_docs)]
 
 mod agent;
+mod checkout;
 mod core;
+mod ctx;
 mod dispatch;
 mod error;
 mod feature;
+mod gate;
+mod history;
 mod mutate;
 mod nodes;
 mod read;
@@ -96,8 +100,9 @@ pub use crate::agent::{AgentConfig, AGENT_CONTEXT_KIND};
 pub use crate::core::{Daemon, DaemonBuilder, DAEMON_SCHEMA_VERSION, WORKTREE_GLOB};
 pub use crate::error::DaemonError;
 pub use crate::feature::EventReceiver;
+pub use crate::gate::GATE_KIND;
 pub use crate::view::{
-    CostView, EdgeView, GraphView, NodeView, RefView, GRAPH_VIEW_SCHEMA_VERSION,
+    CostView, EdgeView, GateVerdictView, GraphView, NodeView, RefView, GRAPH_VIEW_SCHEMA_VERSION,
 };
 
 // Re-export the contract vocabulary a headless client binds to, so it depends on

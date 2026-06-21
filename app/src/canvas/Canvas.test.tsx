@@ -24,6 +24,7 @@ function node(over: Partial<NodeView> & Pick<NodeView, "id" | "kind">): NodeView
     parentIds: [],
     model: null,
     cost: null,
+    gate: null,
     ...over,
   };
 }

@@ -71,6 +71,9 @@ pub(crate) fn build_graph_view(core: &DaemonCore) -> GraphView {
             parent_ids: env.parent_ids.clone(),
             model: env.model.clone(),
             cost: env.cost.clone().map(Into::into),
+            // P7: a gate-verdict node surfaces its verdict for the canvas badge.
+            // Cheap (only gate nodes fetch their payload) and best-effort.
+            gate: gate_verdict_view(core, env),
         })
         .collect();
 
@@ -100,6 +103,21 @@ pub(crate) fn build_graph_view(core: &DaemonCore) -> GraphView {
         edges,
         refs,
     }
+}
+
+/// The gate-verdict view for a node, or `None` if it is not a gate node (or its
+/// verdict payload is absent/malformed). Only gate-kind nodes pay the payload
+/// fetch (DESIGN §8.3).
+fn gate_verdict_view(
+    core: &DaemonCore,
+    env: &spork_graph::NodeEnvelope,
+) -> Option<crate::view::GateVerdictView> {
+    if env.kind != crate::gate::GATE_KIND {
+        return None;
+    }
+    let (payload, _) = core.graph.get_payload(env.id).ok()??;
+    let verdict = crate::gate::verdict_from_payload(&payload)?;
+    Some(verdict.into())
 }
 
 /// Compute the changed-path set of a node's snapshot tree against a baseline.

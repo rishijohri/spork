@@ -36,6 +36,7 @@ function fixtureView(): GraphView {
         parentIds: [],
         model: "claude-sonnet-4-6",
         cost: null,
+        gate: null,
       },
     ],
     edges: [],

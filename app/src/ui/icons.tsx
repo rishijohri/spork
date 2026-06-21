@@ -24,6 +24,7 @@ export type IconName =
   | "activity"
   | "list"
   | "messages-square"
+  | "gate"
   // chrome / action icons
   | "rotate-ccw"
   | "rotate-cw"
@@ -103,6 +104,14 @@ const ICONS: Record<IconName, JSX.Element> = {
   ),
   "messages-square": (
     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+  ),
+  // A gate/checkpoint glyph for the P7 gate-verdict node (DESIGN §8.3).
+  gate: (
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M3 10h18" />
+      <path d="m8 15 2 2 4-4" />
+    </>
   ),
   "rotate-ccw": (
     <>

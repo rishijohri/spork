@@ -42,6 +42,7 @@ function placeholderNode(id: Ulid): NodeView {
     parentIds: [],
     model: null,
     cost: null,
+    gate: null,
   };
 }
 
@@ -215,6 +216,10 @@ export function applyOpLogEvent(
     case "OP_UNDONE":
     case "OP_REDONE":
     case "GC_PERFORMED":
+    // P7: the gate-verdict node and the checkout's HEAD move arrive via
+    // NODE_CREATED / EDGE_ADDED / REF_MOVED; these markers are bookkeeping-only.
+    case "GATE_EVALUATED":
+    case "CHECKOUT_PERFORMED":
       // Bookkeeping-only for the view-model; no node/edge/ref change to fold.
       // (A real slice may refetch graph_view on these; the reducer stays pure.)
       return state;

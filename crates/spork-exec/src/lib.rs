@@ -23,7 +23,9 @@
 //! - `ResourceProfile` / `Lease` — the admission inputs and the durable lease
 //!   record (id, owner pid, ttl, heartbeat, durability).
 //! - `Scheduler` — the admission seam. F4 ships a serial `SerialScheduler`;
-//!   the full constraint solver is P7.
+//!   P7 adds the full constraint solver `ConstraintScheduler` (disjoint→parallel,
+//!   else serialize-with-reason; pooled port allocation + env rewrite; per-branch
+//!   ephemeral DB provisioning) **behind this same trait** (CLAUDE.md C2/C3).
 //! - A durable lease ledger plus a reaper that reclaims a workspace whose lease
 //!   expired or whose owner process is dead, surviving a restart.
 //!
@@ -35,6 +37,7 @@
 #![warn(missing_docs)]
 
 mod backend;
+mod constraint;
 mod env;
 mod error;
 mod lease;
@@ -44,6 +47,7 @@ mod scheduler;
 mod worktree;
 
 pub use backend::{IsolationBackend, SandboxTier, Workspace};
+pub use constraint::{Allocation, ConstraintPlan, ConstraintScheduler, PortPool};
 pub use env::{EnvManifest, ENV_MANIFEST_VERSION};
 pub use error::{ExecError, Result};
 pub use lease::{

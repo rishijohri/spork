@@ -316,6 +316,76 @@ pub enum Command {
         /// The read-only intent of the run (DESIGN.md §6.6).
         intent: AgentRunIntent,
     },
+
+    /// Merge a branch through a **quality gate** (P7, DESIGN.md §8.3, A.4). A
+    /// *mutation*: the daemon performs the 3-way merge, re-runs observers against
+    /// the merged snapshot, evaluates `gate` against those **post-merge** results
+    /// (and an optional pinned `baseline`), and attaches an immutable gate-verdict
+    /// node. The `into_ref` is promoted to the merge node only when the verdict
+    /// allows the transition; a blocked verdict leaves the merge node as an
+    /// unpromoted candidate unless `override_reason` is supplied — an override
+    /// produces a visible audit node (DESIGN.md §8.3). Appended after the frozen
+    /// variants so their wire form is unchanged (CLAUDE.md C2/C3).
+    BranchMergeGated {
+        /// The ref the merge result lands on (promoted only if the gate allows).
+        into_ref: String,
+        /// The node carrying the changes being merged in.
+        from_node_id: Ulid,
+        /// An optional pre-supplied conflict resolution (as for [`Command::BranchMerge`]).
+        resolution: Option<serde_json::Value>,
+        /// The serialized `spork-gates` `GatePolicy` to evaluate post-merge. A
+        /// free JSON value so the predicate grammar can evolve without a contract
+        /// change (CLAUDE.md C3).
+        gate: serde_json::Value,
+        /// An optional serialized `spork-baseline` `Baseline` the gate compares
+        /// against. `None` runs the gate with no baseline (only baseline-free
+        /// predicates can hold).
+        baseline: Option<serde_json::Value>,
+        /// When the gate blocks, an operator's reason to override it (recorded as
+        /// an audit node). `None` leaves a blocked merge unpromoted.
+        override_reason: Option<String>,
+    },
+
+    /// Check out a historical node into the working tree, applying the
+    /// fork-on-divergence policy (P7, DESIGN.md §6.6). A *mutation*: returns an
+    /// `op_id`. Checking out a branch *tip* moves its ref; checking out a
+    /// *non-tip* node auto-forks a new branch at that node so the line is never
+    /// silently overwritten — emitting
+    /// [`OpLogEvent::CheckoutPerformed`](crate::OpLogEvent::CheckoutPerformed) and
+    /// (on a fork) [`OpLogEvent::BranchForked`](crate::OpLogEvent::BranchForked) /
+    /// [`OpLogEvent::RefCreated`](crate::OpLogEvent::RefCreated).
+    NodeCheckout {
+        /// The node to check out.
+        node_id: Ulid,
+    },
+
+    /// Compile a node's lineage-aware context (P7, DESIGN.md §13.2, §13.3). A
+    /// **read**: returns [`CommandResult::Read`](crate::CommandResult::Read) inline
+    /// with the compiled layers, the stable `prefix_hash`, and the
+    /// `SelectionDecision` trace explaining every ancestor inclusion/drop; emits no
+    /// events.
+    NodeContext {
+        /// The node whose context to compile.
+        node_id: Ulid,
+    },
+
+    /// Generate a node's regenerable handoff document (P7, DESIGN.md §13.5). A
+    /// **read**: returns [`CommandResult::Read`](crate::CommandResult::Read) inline
+    /// with the distilled handoff so a fresh agent can start cold; emits no events.
+    NodeHandoff {
+        /// The node whose handoff to generate.
+        node_id: Ulid,
+    },
+
+    /// Query the read-only Lineage/History MCP surface (P7, DESIGN.md §13.7). A
+    /// **read**: `request` is a JSON-RPC 2.0 request for the History MCP server
+    /// (`tools/list`, `tools/call`, …); the reply rides
+    /// [`CommandResult::Read`](crate::CommandResult::Read) inline. Read-only and
+    /// auto lineage-scoped; emits no events.
+    HistoryQuery {
+        /// The JSON-RPC request object for the History MCP server.
+        request: serde_json::Value,
+    },
 }
 
 impl Command {
@@ -336,6 +406,9 @@ impl Command {
                 | Command::BlobRead { .. }
                 | Command::GitExport { .. }
                 | Command::GitPush { .. }
+                | Command::NodeContext { .. }
+                | Command::NodeHandoff { .. }
+                | Command::HistoryQuery { .. }
         )
     }
 }
@@ -396,6 +469,15 @@ mod tests {
                 privacy: "any".into(),
                 intent: AgentRunIntent::Ask,
             },
+            Command::BranchMergeGated {
+                into_ref: "main".into(),
+                from_node_id: b,
+                resolution: None,
+                gate: serde_json::json!({"id": "g1"}),
+                baseline: Some(serde_json::json!({"id": "b1"})),
+                override_reason: Some("hotfix".into()),
+            },
+            Command::NodeCheckout { node_id: a },
         ]
     }
 
@@ -409,6 +491,11 @@ mod tests {
             Command::BlobRead {
                 tree_hash: hash_bytes(b"t"),
                 path: "src/main.rs".into(),
+            },
+            Command::NodeContext { node_id: a },
+            Command::NodeHandoff { node_id: a },
+            Command::HistoryQuery {
+                request: serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}),
             },
         ]
     }

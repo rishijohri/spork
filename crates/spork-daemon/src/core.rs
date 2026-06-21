@@ -307,6 +307,12 @@ impl DaemonBuilder {
             Capability::NetConnect,
             Scope::new().with_hosts(["localhost", "127.0.0.1"]),
         ));
+        // P7: the read-only Lineage/History MCP (`history.query`) is gated on
+        // `nodes.readOutputs` (lineage-only, read-only). It is granted alongside
+        // model access since both are "agent surfaces"; it stays deny-by-default
+        // without this opt-in (DESIGN §13.7, §15.2).
+        self.grants
+            .push(Grant::new(Capability::NodesReadOutputs, Scope::new()));
         self
     }
 
@@ -460,6 +466,11 @@ pub(crate) fn register_builtins_into(graph: &mut GraphService) -> Result<(), Dae
     // through the same public registry path (DESIGN §6.6, §7.1, §9).
     graph
         .register_descriptor(crate::agent::agent_context_descriptor())
+        .map_err(|e| DaemonError::Graph(e.to_string()))?;
+    // P7: the gate-verdict node a gated merge attaches, same public path
+    // (DESIGN §8.3, §7.1, §9).
+    graph
+        .register_descriptor(crate::gate::gate_descriptor())
         .map_err(|e| DaemonError::Graph(e.to_string()))?;
     Ok(())
 }

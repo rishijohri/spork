@@ -32,6 +32,7 @@ function view(): GraphView {
         parentIds: [],
         model: "anthropic/claude-sonnet-4-6",
         cost: null,
+        gate: null,
       },
     ],
     edges: [],

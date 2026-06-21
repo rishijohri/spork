@@ -154,10 +154,103 @@ function defaultReplyFor(cmd: Command): CommandResult {
         },
       };
     }
+    case "BRANCH_MERGE_GATED": {
+      // Mirror the daemon: a blocked merge is not promoted unless overridden.
+      const overridden = cmd.overrideReason != null;
+      return {
+        result: "MUTATION",
+        opId: fakeUlid(),
+        ids: {
+          merged: true,
+          mergeNodeId: fakeUlid(),
+          gateNodeId: fakeUlid(),
+          decision: overridden ? "overridden" : "blocked",
+          promoted: overridden,
+          reasons: ["mock gate: post-merge check regressed"],
+        },
+      };
+    }
+    case "NODE_CHECKOUT":
+      return {
+        result: "MUTATION",
+        opId: fakeUlid(),
+        ids: { nodeId: cmd.nodeId, isTip: true, forkedRef: null },
+      };
+    case "NODE_CONTEXT":
+      return { result: "READ", data: mockContext(cmd.nodeId) };
+    case "NODE_HANDOFF":
+      return { result: "READ", data: mockHandoff(cmd.nodeId) };
+    case "HISTORY_QUERY":
+      return { result: "READ", data: mockHistoryResponse(cmd.request) };
     default:
       // Every other command is a mutation: reply with an op_id + minted ids.
       return { result: "MUTATION", opId: fakeUlid(), ids: mintedIdsFor(cmd) };
   }
+}
+
+/** A plausible compiled-context READ payload for the browser mock. */
+function mockContext(nodeId: Ulid): Record<string, unknown> {
+  return {
+    nodeId,
+    prefixHash: `b3:ctx-${nodeId}`,
+    layerCount: 4,
+    totalTokens: 320,
+    layers: [
+      { kind: "system", content: "You are a Spork agent.", tokenEstimate: 8 },
+      { kind: "repo_map", content: "src/lib.rs", tokenEstimate: 4 },
+      { kind: "ancestor_summary", content: "parent did X", tokenEstimate: 6 },
+      { kind: "current_diff", content: "+ added a line", tokenEstimate: 5 },
+    ],
+    selectionTrace: [
+      { kind: "system", disposition: "included", reason: "system prompt" },
+      {
+        kind: "ancestor_summary",
+        disposition: "summarized",
+        reason: "ancestor summarized under summarize strategy",
+      },
+    ],
+  };
+}
+
+/** A plausible handoff READ payload for the browser mock. */
+function mockHandoff(nodeId: Ulid): Record<string, unknown> {
+  return {
+    schema_version: 1,
+    summary: "added retry to the http client",
+    key_decisions: ["use exponential backoff"],
+    files_touched: [{ path: "src/client.rs", rationale: "changed in this node" }],
+    open_threads: [],
+    constraints: [],
+    test_state: "see attached checks",
+    lineage_hash: `b3:lin-${nodeId}`,
+    regenerable: true,
+  };
+}
+
+/** A minimal JSON-RPC response for the read-only History MCP in browser mock. */
+function mockHistoryResponse(request: unknown): Record<string, unknown> {
+  const req = (request ?? {}) as Record<string, unknown>;
+  const id = req["id"] ?? 1;
+  const method = req["method"];
+  if (method === "tools/list") {
+    const tools = [
+      "search_history",
+      "get_node_transcript",
+      "walk_ancestors",
+      "find_decisions",
+      "find_files_touched",
+      "get_handoff",
+    ].map((name) => ({ name }));
+    return { jsonrpc: "2.0", id, result: { tools } };
+  }
+  if (method === "tools/call") {
+    return {
+      jsonrpc: "2.0",
+      id,
+      result: { content: [{ type: "text", text: "[]" }], isError: false },
+    };
+  }
+  return { jsonrpc: "2.0", id, result: null };
 }
 
 /**
@@ -448,6 +541,7 @@ function demoNode(
   parentIds: Ulid[],
   model: string | null,
   cost: NodeView["cost"] = null,
+  gate: NodeView["gate"] = null,
 ): NodeView {
   return {
     id,
@@ -461,6 +555,7 @@ function demoNode(
     parentIds,
     model,
     cost,
+    gate,
   };
 }
 

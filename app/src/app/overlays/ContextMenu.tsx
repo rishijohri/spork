@@ -131,8 +131,20 @@ function NodeMenu({ nodeId }: { nodeId: string }): JSX.Element {
       <Item icon="upload" label="Push" disabled={!mat} onClick={() => act(() => openModal({ kind: "push", nodeId }))} />
       <div className="spork-ctx-sep" />
       <Item icon="copy" label="Copy node id" onClick={copyId} />
-      <Item icon="download" label="Check out node" disabled hint="P7" />
-      <Item icon="circle-dot" label="Pin node" disabled hint="P7" />
+      <Item
+        icon="download"
+        label="Check out node"
+        disabled={!mat}
+        onClick={() =>
+          act(() =>
+            void run(
+              { command: "NODE_CHECKOUT", nodeId },
+              { nodeId, label: "checkout (forks if non-tip)" },
+            ),
+          )
+        }
+      />
+      <Item icon="circle-dot" label="Pin node" disabled hint="P8" />
     </>
   );
 }

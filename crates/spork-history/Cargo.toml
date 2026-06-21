@@ -1,0 +1,10 @@
+[package]
+name = "spork-history"
+version = "0.1.0"
+edition = "2021"
+description = "Spork P7 read-only Lineage/History: a v1 HistoryIndex over the content-addressed transcript store + DAG, exposed as a read-only, lineage-scoped MCP server (DESIGN §13.7, §4.7)."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+ulid = { workspace = true, features = ["serde"] }

@@ -322,6 +322,10 @@ impl Daemon {
             "check": parsed.kind,
             "outcome": envelope.outcome.label(),
             "run_id": envelope.run_id.to_string(),
+            // Persist the config the check ran with so a post-merge re-run
+            // (DESIGN A.4) reproduces the *same* check semantics rather than a
+            // vacuous empty-config pass (P7 gate correctness).
+            "config": parsed.config,
         });
         let edge = observing_edge_for(&parsed.kind);
 
@@ -454,8 +458,15 @@ impl Daemon {
                 merged_tree,
                 resolution: res,
             } => {
-                let merge_node =
-                    self.create_merge_node(into_ref, ours, theirs, base_tree, merged_tree, &res)?;
+                let merge_node = self.create_merge_node(
+                    into_ref,
+                    ours,
+                    theirs,
+                    base_tree,
+                    merged_tree,
+                    &res,
+                    true,
+                )?;
                 self.publish_event(|seq| OpLogEvent::MergePerformed {
                     seq,
                     node_id: merge_node,
@@ -472,9 +483,276 @@ impl Daemon {
         }
     }
 
+    /// `branch.mergeGated`: a 3-way merge guarded by a [`GatePolicy`] evaluated
+    /// against the **post-merge** re-run results (P7, DESIGN.md §8.3, A.4).
+    ///
+    /// The merge node is always created (materializable), observers re-run against
+    /// it, and the gate evaluates those post-merge results vs the optional pinned
+    /// baseline. The verdict is attached as an immutable gate node carrying the
+    /// merge snapshot's `lineage_hash` (it travels with the snapshot). `into_ref`
+    /// is promoted to the merge node only if the verdict allows the transition; a
+    /// blocked verdict leaves the merge unpromoted unless `override_reason` is
+    /// supplied — an override produces a visible audit (the `Overridden` verdict).
+    pub(crate) fn cmd_branch_merge_gated(
+        &self,
+        into_ref: &str,
+        from_node_id: Ulid,
+        resolution: Option<serde_json::Value>,
+        gate: serde_json::Value,
+        baseline: Option<serde_json::Value>,
+        override_reason: Option<String>,
+    ) -> Result<CommandResult, DaemonError> {
+        self.authorize(
+            Capability::SnapshotWrite,
+            &RequestedScope::path(WORKTREE_GLOB),
+        )?;
+
+        let policy: spork_gates::GatePolicy = serde_json::from_value(gate)
+            .map_err(|e| DaemonError::Graph(format!("invalid gate policy: {e}")))?;
+        let baseline: Option<spork_baseline::Baseline> = match baseline {
+            Some(b) => Some(
+                serde_json::from_value(b)
+                    .map_err(|e| DaemonError::Graph(format!("invalid baseline: {e}")))?,
+            ),
+            None => None,
+        };
+
+        let ours = self.resolve_ref_head(into_ref)?;
+        let theirs = from_node_id;
+        let base = self.nearest_common_ancestor(ours, theirs)?;
+        let ours_tree = self.node_root_tree_only(ours)?;
+        let theirs_tree = self.node_root_tree_only(theirs)?;
+        let base_tree = match base {
+            Some(b) => self.node_root_tree_only(b)?,
+            None => self.empty_tree()?,
+        };
+
+        let outcome = {
+            let core = self.core.lock().expect("daemon core mutex poisoned");
+            match &resolution {
+                Some(r) => {
+                    let resolution = parse_resolution(r)?;
+                    three_way_merge_with_resolution(
+                        &core.store,
+                        &base_tree,
+                        &ours_tree,
+                        &theirs_tree,
+                        &resolution,
+                    )
+                    .map_err(|e| DaemonError::Graph(e.to_string()))?
+                }
+                None => three_way_merge(&core.store, &base_tree, &ours_tree, &theirs_tree)
+                    .map_err(|e| DaemonError::Graph(e.to_string()))?,
+            }
+        };
+
+        let (merged_tree, res) = match outcome {
+            MergeOutcome::Conflicts(conflicts) => {
+                let conflict_json: Vec<serde_json::Value> = conflicts
+                    .iter()
+                    .map(|c| {
+                        serde_json::json!({
+                            "path": c.path,
+                            "base": c.base.map(|h| h.to_hex()),
+                            "ours": c.ours.map(|h| h.to_hex()),
+                            "theirs": c.theirs.map(|h| h.to_hex()),
+                        })
+                    })
+                    .collect();
+                return Ok(self.record_mutation(serde_json::json!({
+                    "merged": false,
+                    "conflicts": conflict_json,
+                })));
+            }
+            MergeOutcome::Clean {
+                merged_tree,
+                resolution,
+            } => (merged_tree, resolution),
+        };
+
+        // Create the merge node WITHOUT promoting the ref yet (DESIGN.md §8.3).
+        let merge_node =
+            self.create_merge_node(into_ref, ours, theirs, base_tree, merged_tree, &res, false)?;
+        self.publish_event(|seq| OpLogEvent::MergePerformed {
+            seq,
+            node_id: merge_node,
+        })?;
+
+        // Re-run observers against the merged snapshot and collect the post-merge
+        // results the gate evaluates (DESIGN.md A.4 gate interaction).
+        let results = self.rerun_observers_collect(&[ours, theirs], merge_node)?;
+        let lineage = {
+            let core = self.core.lock().expect("daemon core mutex poisoned");
+            core.graph
+                .get_node(merge_node)
+                .map_err(|e| DaemonError::Graph(e.to_string()))?
+                .map(|env| env.lineage_hash)
+                .ok_or_else(|| DaemonError::NotFound(format!("merge node {merge_node}")))?
+        };
+
+        let evaluated: Vec<spork_gates::EvaluatedResult> = results
+            .into_iter()
+            .map(|(kind, env)| spork_gates::EvaluatedResult::new(kind, env))
+            .collect();
+        let mut input = spork_gates::GateInput::new(evaluated, lineage);
+        input.baseline = baseline;
+        let mut verdict = policy.evaluate(&input);
+
+        // A blocked verdict may be overridden (recorded — DESIGN.md §8.3).
+        if verdict.is_blocked() {
+            if let Some(reason) = override_reason {
+                verdict = verdict.overridden(spork_gates::GateOverride::new(reason, "user"));
+            }
+        }
+
+        // Attach the immutable gate-verdict node (the visible audit).
+        let gate_node = self.attach_gate_node(merge_node, &verdict)?;
+        self.publish_event(|seq| OpLogEvent::GateEvaluated {
+            seq,
+            node_id: gate_node,
+        })?;
+
+        // Promote the ref only if the verdict allows the transition.
+        let promoted = verdict.allows_transition();
+        if promoted {
+            self.promote_ref(into_ref, merge_node)?;
+        }
+
+        Ok(self.record_mutation(serde_json::json!({
+            "merged": true,
+            "mergeNodeId": merge_node.to_string(),
+            "gateNodeId": gate_node.to_string(),
+            "decision": decision_label(verdict.decision),
+            "promoted": promoted,
+            "reasons": verdict.reasons,
+        })))
+    }
+
+    /// Re-run observing checks against the merge node, collecting the post-merge
+    /// `(kind, ResultEnvelope)` pairs the gate evaluates (DESIGN.md A.4).
+    ///
+    /// Mirrors [`rerun_observers_against_merge`](Self::rerun_observers_against_merge)
+    /// but returns the envelopes. Best-effort: a re-run error skips that kind
+    /// rather than failing the merge.
+    fn rerun_observers_collect(
+        &self,
+        parents: &[Ulid],
+        merge_node: Ulid,
+    ) -> Result<Vec<(String, ResultEnvelope)>, DaemonError> {
+        // Collect each observing kind attached to a parent **with the config it
+        // ran under** (read from the observer payload), so the post-merge re-run
+        // reproduces the same check semantics — otherwise a config-driven check
+        // (e.g. sanity's forbid set) would vacuously pass on an empty config and
+        // the gate would see a false green (DESIGN A.4).
+        let mut configs: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+        {
+            let core = self.core.lock().expect("daemon core mutex poisoned");
+            let state = core
+                .graph
+                .projection()
+                .state()
+                .map_err(|e| DaemonError::Graph(e.to_string()))?;
+            for parent in parents {
+                for env in state.nodes.values() {
+                    if env.parent_ids.contains(parent)
+                        && env.family == spork_graph::Family::Observing
+                    {
+                        let config = core
+                            .graph
+                            .get_payload(env.id)
+                            .ok()
+                            .flatten()
+                            .and_then(|(p, _)| p.get("config").cloned())
+                            .unwrap_or_else(|| serde_json::json!({}));
+                        configs.entry(env.kind.clone()).or_insert(config);
+                    }
+                }
+            }
+        }
+        let mut out = Vec::new();
+        for (kind, config) in configs {
+            let parsed = ParsedCheckSpec {
+                kind: kind.clone(),
+                config,
+                changed_paths: Vec::new(),
+            };
+            if let Ok(run) = self.run_check_internal(merge_node, &parsed) {
+                out.push((kind, run.envelope));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Attach an immutable gate-verdict node observing the merge node (DESIGN.md
+    /// §8.3). The verdict is stored in the node payload (under `"verdict"`), so it
+    /// travels with the snapshot, and the node links to the merge node by both a
+    /// PARENT_CHILD and a dotted DERIVED_FROM edge.
+    fn attach_gate_node(
+        &self,
+        merge_node: Ulid,
+        verdict: &spork_gates::GateVerdict,
+    ) -> Result<Ulid, DaemonError> {
+        let version = semver::Version::parse(crate::gate::GATE_VERSION)
+            .map_err(|e| DaemonError::Graph(format!("bad gate version: {e}")))?;
+        let payload = serde_json::json!({
+            "schema_version": 1,
+            "verdict": verdict,
+            "merge_node": merge_node.to_string(),
+        });
+        let node_id = {
+            let mut core = self.core.lock().expect("daemon core mutex poisoned");
+            let branch_id = core
+                .graph
+                .get_node(merge_node)
+                .map_err(|e| DaemonError::Graph(e.to_string()))?
+                .map(|env| env.branch_id)
+                .unwrap_or_else(|| "main".to_string());
+            let env = core
+                .graph
+                .create_node(
+                    crate::gate::GATE_KIND,
+                    Some(&version),
+                    vec![merge_node],
+                    &branch_id,
+                    payload,
+                    false,
+                    None,
+                )
+                .map_err(|e| DaemonError::Graph(e.to_string()))?;
+            let node_id = env.id;
+            core.graph
+                .add_edge(node_id, merge_node, EdgeType::DerivedFrom)
+                .map_err(|e| DaemonError::Graph(e.to_string()))?;
+            node_id
+        };
+        self.publish_event(|seq| OpLogEvent::NodeCreated {
+            seq,
+            node_id,
+            schema_version: 1,
+        })?;
+        self.publish_event(|seq| OpLogEvent::EdgeAdded {
+            seq,
+            from: node_id,
+            to: merge_node,
+            edge: EdgeType::ParentChild,
+        })?;
+        self.publish_event(|seq| OpLogEvent::EdgeAdded {
+            seq,
+            from: node_id,
+            to: merge_node,
+            edge: EdgeType::DerivedFrom,
+        })?;
+        Ok(node_id)
+    }
+
     /// Create the materializable Merge node: wrap the merged tree in a Snapshot
     /// object, create a `merge` node owning it with both parents, attach the
-    /// merge edges, move `into_ref`, and publish the node + edges.
+    /// merge edges, optionally promote `into_ref`, and publish the node + edges.
+    ///
+    /// `promote` controls whether `into_ref` is moved to the new merge node: the
+    /// ungated [`cmd_branch_merge`](Self::cmd_branch_merge) always promotes, while
+    /// the P7 gated merge ([`cmd_branch_merge_gated`](Self::cmd_branch_merge_gated))
+    /// defers promotion until the gate verdict is known (DESIGN.md §8.3).
     #[allow(clippy::too_many_arguments)]
     fn create_merge_node(
         &self,
@@ -484,6 +762,7 @@ impl Daemon {
         base_tree: Hash,
         merged_tree: Hash,
         resolution: &spork_merge::ConflictResolution,
+        promote: bool,
     ) -> Result<Ulid, DaemonError> {
         let version = semver::Version::parse(BUILTIN_TYPE_VERSION)
             .map_err(|e| DaemonError::Graph(format!("bad builtin version: {e}")))?;
@@ -528,19 +807,6 @@ impl Daemon {
             core.graph
                 .add_edge(node_id, theirs, EdgeType::MergeParent)
                 .map_err(|e| DaemonError::Graph(e.to_string()))?;
-            // Move the target ref to the merge node.
-            core.graph
-                .move_ref(into_ref, node_id)
-                .map_err(|e| {
-                    // The ref may not exist yet (a merge onto a fresh ref); create
-                    // it instead so the merge always lands somewhere.
-                    DaemonError::Graph(e.to_string())
-                })
-                .or_else(|_| {
-                    core.graph
-                        .create_ref(into_ref, spork_graph::RefKind::Branch, node_id)
-                        .map_err(|e| DaemonError::Graph(e.to_string()))
-                })?;
             node_id
         };
 
@@ -563,13 +829,50 @@ impl Daemon {
             to: theirs,
             edge: EdgeType::MergeParent,
         })?;
-        let moved = into_ref.to_string();
-        self.publish_event(|seq| OpLogEvent::RefMoved {
-            seq,
-            ref_name: moved,
-            to: node_id,
-        })?;
+        // Promote the target ref to the merge node, unless a gated merge is
+        // deferring promotion until its verdict is known (DESIGN.md §8.3).
+        if promote {
+            self.promote_ref(into_ref, node_id)?;
+        }
         Ok(node_id)
+    }
+
+    /// Move `into_ref` to `node_id` (creating it if absent) and publish the
+    /// matching rail event. The shared promotion step for the merge paths.
+    pub(crate) fn promote_ref(&self, into_ref: &str, node_id: Ulid) -> Result<(), DaemonError> {
+        // Whether the ref already exists decides move-vs-create, so the rail event
+        // is labelled correctly (REF_MOVED vs REF_CREATED) rather than always
+        // "moved".
+        let existed = {
+            let mut core = self.core.lock().expect("daemon core mutex poisoned");
+            let existed = core
+                .graph
+                .projection()
+                .ref_target(into_ref)
+                .map_err(|e| DaemonError::Graph(e.to_string()))?
+                .is_some();
+            if existed {
+                core.graph
+                    .move_ref(into_ref, node_id)
+                    .map_err(|e| DaemonError::Graph(e.to_string()))?;
+            } else {
+                core.graph
+                    .create_ref(into_ref, spork_graph::RefKind::Branch, node_id)
+                    .map_err(|e| DaemonError::Graph(e.to_string()))?;
+            }
+            existed
+        };
+        let ref_name = into_ref.to_string();
+        if existed {
+            self.publish_event(|seq| OpLogEvent::RefMoved {
+                seq,
+                ref_name,
+                to: node_id,
+            })?;
+        } else {
+            self.publish_event(|seq| OpLogEvent::RefCreated { seq, ref_name })?;
+        }
+        Ok(())
     }
 
     /// Re-run every observing check kind attached to `parents` against the merged
@@ -761,6 +1064,16 @@ fn scratch_workspace(root: &std::path::Path, snapshot: Hash) -> Workspace {
             durable: false,
             last_heartbeat_ms: 0,
         },
+    }
+}
+
+/// A short, stable label for a gate decision (for the mutation reply `ids`).
+fn decision_label(decision: spork_gates::Decision) -> &'static str {
+    match decision {
+        spork_gates::Decision::Pass => "pass",
+        spork_gates::Decision::Warn => "warn",
+        spork_gates::Decision::Blocked => "blocked",
+        spork_gates::Decision::Overridden => "overridden",
     }
 }
 

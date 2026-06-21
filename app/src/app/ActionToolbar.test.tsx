@@ -31,6 +31,7 @@ function editNode(): NodeView {
     parentIds: [],
     model: "gpt-4o",
     cost: null,
+    gate: null,
   };
 }
 
@@ -47,6 +48,7 @@ function checkNode(): NodeView {
     parentIds: [EDIT_ID],
     model: null,
     cost: null,
+    gate: null,
   };
 }
 
