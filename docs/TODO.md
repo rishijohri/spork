@@ -10,7 +10,7 @@
 - Status: `[ ]` todo · `[~]` in progress · `[x]` done. Keep this file updated as the single source of progress.
 - **At the end of EVERY phase (required):** (1) re-verify yourself — run `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo fmt --all --check` from the repo root (prefix cargo with `export PATH="$HOME/.cargo/bin:$PATH"`); **do not trust an agent's self-report — they can be stale (e.g. fmt)**; for the no-stub check grep for the **macros** `grep -rnE 'todo!\(|unimplemented!\(|unreachable!\(' crates/*/src` (must be empty) — do NOT grep bare `TODO`/`FIXME`/`XXX`, which `spork-runner` legitimately contains as its detection patterns (see plan §8.3 exclusion); (2) check off the phase's Build + DoD boxes and append a one-line `✅ verified (N tests green)` note to the phase; (3) update the **Current status** line below; (4) commit the code as `Fx: <name> …` and the doc update as `docs: mark Fx done …`. A box is only `[x]` once independently re-verified green.
 
-**Current status:** **🎉 FOUNDATION COMPLETE — F0–F4 all done.** 26 crates, **826 tests green**, clippy/fmt clean, no stub macros. F0 byte-identity · F1 event-sourcing · F2 typed-graph · F3 (headless) daemon/security/drift/restore/git · F4 execution/result/provider/context seams. Every load-bearing contract is frozen with exactly one real impl; the feature phases **P5–P9 are now purely additive behind these seams**. Plus **P5 complete** — 27 crates, **913 tests green**: six built-in node types (Edit/Validation/Stress/Sanity + Merge/Snapshot) through the public registry; Edit auto-runs Sanity; append-only results; 3-way merge; import-as-snapshot; additive-only. Plus **F3-UI built** at `app/` (Tauri v2 + React/TS; 52 Vitest tests, tsc+vite+cargo all green here; **visual/UX pass pending on a display — run `cd app && npm run tauri:dev`**). Committed on `feat/f0-byte-identity`. **Roadmap:** ✅F0–F4 ✅P5 ✅F3-UI(build) → **P6** → P7 → P8 → P9. Next: **P6 — Multi-Provider Routing & Cost Ledger**.
+**Current status:** **🎉 FOUNDATION COMPLETE — F0–F4 all done.** 26 crates, **826 tests green**, clippy/fmt clean, no stub macros. F0 byte-identity · F1 event-sourcing · F2 typed-graph · F3 (headless) daemon/security/drift/restore/git · F4 execution/result/provider/context seams. Every load-bearing contract is frozen with exactly one real impl; the feature phases **P5–P9 are now purely additive behind these seams**. Plus **P5 complete** — 27 crates, **913 tests green**: six built-in node types (Edit/Validation/Stress/Sanity + Merge/Snapshot) through the public registry; Edit auto-runs Sanity; append-only results; 3-way merge; import-as-snapshot; additive-only. Plus **F3-UI redesigned** at `app/` (Tauri v2 + React/TS to the `UI_UX_DESIGN.md` v1 spec; 66 Vitest tests, tsc+vite green; live-smoke-tested in browser). Plus **P6 provider/routing/cost LAYER complete** — **28 crates, 961 tests green**: OpenAI-compat + local + CLI adapters and a `MultiProviderRouter` (pinned|policy|inherit, fallback+breaker, privacy-enforcing) behind the frozen F4 `ProviderAdapter`/`ModelRouter`; `CapabilityRegistry` (static + probe seam + json-emulated); new `spork-cost` cache-aware `CostAccountant`; all additive, no frozen contract changed. On branch `feat/f3-ui-redesign` (PR #1). **Roadmap:** ✅F0–F4 ✅P5 ✅F3-UI ◐P6(layer done; daemon integration + transports remaining) → P7 → P8 → P9. Next P6: wire the router/adapters/cost into the daemon agent-run path + live HTTP/subprocess transports + IPC/UI.
 
 ---
 
@@ -204,19 +204,21 @@ These are foundation infrastructure, not features — wired in behind frozen sea
 ## P6 — Multi-Provider Routing & Cost Ledger
 **Goal:** Add OpenAI-compat, local, CLI adapters + DAG-aware routing behind the F4 port — additive, no stored-history rewrite. **Depends on:** P5. **Design:** §5.4, §12.1–§12.5, §15.5. **Freeze before:** — (writes into frozen F4 contracts).
 
-**Build:**
-- [ ] `providers/openai-compat/` (OpenAI/OpenRouter/vLLM), `providers/local/` (Ollama/LM Studio), `providers/cli/` (Copilot CLI, TTY/JSONL)
-- [ ] `router/` — `ModelRouter` resolving `ModelSelector` (pinned|policy|inheritFromParent); queries `CapabilityRegistry` before strategy; fallback + circuit-breaker; enforces `local_only`/`no_third_party_aggregator`/`any`
-- [ ] `capabilities/` — static hint table refined by a cached probe (keyed+versioned by model+endpoint+version); `json_emulated` tool-calling fallback
-- [ ] `cost/` — cache-aware `CostAccountant` (read 0.1×, write 1.25–2×), attributed per originating node
+**Build (provider/routing/cost LAYER — complete, behind the frozen F4 seams):**
+- [x] OpenAI-compatible adapter (`spork-provider::openai`, serves OpenAI/OpenRouter/vLLM/LM Studio) · local via `OpenAiAdapter::local` (Ollama/LM Studio OpenAI-compat, json-emulated default) · CLI JSONL adapter (`spork-provider::cli`) — all behind the frozen `ProviderAdapter` port, exact `to_wire`↔`from_wire` round-trips
+- [x] `MultiProviderRouter` (`spork-provider::multi_router`) behind the frozen `ModelRouter`: resolves `ModelSelector` (widened to pinned|policy|inheritFromParent, schema v2 + forward-migration); queries `CapabilityRegistry`; fallback chain + circuit-breaker; enforces `local_only`/`no_third_party_aggregator`/`any`
+- [x] `CapabilityRegistry` (`spork-provider::registry`) — static hint table + `CapabilityProbe` seam refining to `RuntimeProbe`; `json_emulated` strategy decision
+- [x] `spork-cost` — cache-aware `CostAccountant` (read 0.1×, write 1.25×) → canonical integer-micro-USD `CostRecord` per node + per-branch aggregate + cache-savings
 
 **Definition of Done:**
-- [ ] node hot-swaps mid-session frontier→local Ollama with `json_emulated` tool-calls auto-engaged, still restores code+conversation intact
-- [ ] `local_only` node provably refused routing to any cloud/aggregator provider
-- [ ] per-node cost with cache reads at 0.1× attributed correctly on the fixture
-- [ ] adding a fifth OpenAI-compat endpoint = new adapter config, **zero core edit, no stored-history migration**
+- [ ] node hot-swaps mid-session frontier→local Ollama with `json_emulated` tool-calls auto-engaged, still restores code+conversation intact — *layer support proven (router hot-swap resolution + capability json-emulated selection tested; F4 cross-provider projection drops lossy blocks; F4 dual-restore); the live agent loop that exercises it end-to-end is the remaining **daemon integration** below*
+- [x] `local_only` node provably refused routing to any cloud/aggregator provider — *router test: cloud/aggregator → `PrivacyViolation`, local permitted; fallback never escalates locality*
+- [x] per-node cost with cache reads at 0.1× attributed correctly on the fixture — *`spork-cost` tests*
+- [x] adding a fifth OpenAI-compat endpoint = new adapter config, **zero core edit, no stored-history migration** — *a new endpoint is an `OpenAiAdapter` + a `ProviderBinding` + a registry hint; no core edit*
 
-**Demoable:** pin an Edit to Claude and a Sanity to a free local model; hot-swap a node OpenAI→Claude mid-conversation without losing context; open a per-branch cost ledger with cache savings broken out.
+**Remaining P6 (daemon integration, not the provider layer):** wire `MultiProviderRouter` + adapters + `CostAccountant` into the daemon node-create/agent-run path (apply the §6.6 fork-on-divergence auto-branch here); the live **HTTP transport** (OpenAI/Anthropic) and **subprocess transport** (CLI) behind a `Transport` seam (offline mock built into the mapping tests); IPC to expose per-node model selection + the per-branch cost ledger; UI activation of the model selector + cost block (UI_UX §14.1).
+
+**Demoable (layer):** resolve `openai/gpt-4o` then `local/llama3.1` for one node (hot-swap), prove a `local_only` node is refused cloud, and compute a per-branch cost ledger with cache savings broken out — all offline, via `spork-provider` + `spork-cost`. ✅ verified (961 workspace tests green; provider/routing/capability/cost layer; clippy/fmt clean; additive-only — no frozen contract changed).
 
 ---
 
