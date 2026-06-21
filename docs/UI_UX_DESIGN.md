@@ -584,10 +584,11 @@ Every clickable/keyboard-operable element, its trigger, the **visual change** it
 | **Commit to Git** | click (ownsSnapshot) | Opens Commit modal (5.10d); on commit, success activity line w/ branch+SHA | `GIT_EXPORT {nodeId, branch?}` → `Git` result | 🟢 |
 | **Push** (danger) | click (ownsSnapshot) | Opens Push modal (5.10d); success or **explicit denial** (5.10e) on `net.connect` deny | `GIT_PUSH {nodeId, remote?}` → `Git` result | 🟢 |
 | New ref/branch (palette/nav `+`) | click | New-ref popover; ref appears | `REF_CREATE {name, kind, to}` → `REF_CREATED` | 🟢 |
-| Model selector `▾` | click | Provider-grouped menu; selecting sets default-for-new-nodes; tooltip clarifies scope | Local `setDefaultModel` (stamped on next `NODE_CREATE`) | 🟢 |
+| Model selector `▾` | click | Menu of `provider/model` selector keys; selecting sets the default an agent run uses | Local `setDefaultModel` | 🟢 |
+| **Ask agent…** | node context-menu / Node-Details header | Ask-agent modal (prompt·model·privacy·intent); a read-only run attaches a priced *Agent* context node by a dotted edge | `NODE_AGENT_RUN {targetNodeId, prompt, modelKey, privacy, intent}` → `MUTATION` (model+cost in `ids`) | 🟢 |
 | Settings `⚙` | click | Opens settings popover (5.13) | Local | 🟢 |
 | Daemon status dot `●` | hover | Tooltip: connected / reconnecting / disconnected (5.12) | Local (connection state) | 🟢 |
-| Cost / spend indicator | — | — | per-node + per-branch cost ledger | 🟡 P6 |
+| Cost / spend indicator | — | per-node model+cost (Info tab) + per-branch **spend** ledger (status sub-strip) | `NodeView.cost` (P6 cost write-path) | 🟢 |
 
 ### 7.2 Left navigator
 
@@ -795,15 +796,18 @@ The honesty gate. Every UI capability ↔ its DESIGN section ↔ its IPC/seam ba
 
 | UI capability | DESIGN § | Backing needed | Phase | Status |
 |---|---|---|---|---|
-| **Live conversation stream** (plumbed, unproduced) | §14.4, §5.5 | a provider that emits `CHAT_TOKENS` (channel built; no producer) | P6 | 🟡 |
+| **Read-only agent run** (Ask agent → attached `agent-context` node) | §6.6, §12.1 | `NODE_AGENT_RUN` + router + transport + cost | P6 | 🟢 |
+| Multi-provider routing + hot-swap (real) | §12.1–12.5 | `ModelRouter`, provider adapters, `Transport` | P6 | 🟢 |
+| Per-node + per-branch **cost ledger** | §5.4, §12.5 | `CostAccountant` + `NodeView.cost` | P6 | 🟢 |
+| Privacy class per agent run (refuse cloud) | §15.5, §9.3 | router enforcement + the modal's local-only toggle | P6 | 🟢 |
+| Read-only **attach** (dotted `DERIVED_FROM`) on agent analysis/plan | §6.6 | daemon agent-run path | P6 | 🟢 |
+| **Live conversation stream** (plumbed, unproduced) | §14.4, §5.5 | a *streaming* transport emitting `CHAT_TOKENS` (P6 ships non-streaming runs) | P6+ | 🟡 |
 | **Live run output** (plumbed, unproduced) | §14.4, §5.9 | a runner that streams `RUN_STDOUT` (channel built; no producer) | P7 | 🟡 |
 | **Typed result-detail rendering** | §8.1, §14.5 | result-read surface (envelope produced by F4/P5, not exposed) | P7 | 🟡 |
 | **Create snapshot/import node from the UI** | §6.2, §10.2 | a capture command (`create_node` needs a real content hash the renderer can't mint; nodes are daemon-produced via drift/agent) | P7 | 🟡 |
-| **Auto-branch on work (fork-on-divergence)** + read-only attach | §6.6 | daemon policy in the agent-run / drift-reconcile / checkout paths | P6/P7 | 🟡 |
-| Conversation **composer** (send → agent turn) | §12, §13 | provider routing + context compile + agent-turn cmd | P6/P7 | 🟡 |
-| Multi-provider routing + hot-swap (real) | §12.1–12.5 | `ModelRouter`, provider adapters | P6 | 🟡 |
-| Per-node + per-branch **cost ledger** | §5.4, §12.5 | `CostAccountant` | P6 | 🟡 |
-| Privacy class per node; per-node budget | §15.5, §9.3 | router enforcement + budget UI | P6 | 🟡 |
+| **Code-mutating** agent run + fork-on-divergence | §6.6 | tiered executors (tool loop → new snapshot) | P8 | 🟡 |
+| Conversation **composer** (send → code-mutating turn) | §12, §13 | the code-mutating agent loop + context compile | P8 | 🟡 |
+| Per-node token/USD **budget** UI | §15.5, §9.3 | budget-scope editing surface | P7 | 🟡 |
 | Quality **gates** / verdicts / baselines / flaky | §8.3 | `GatePolicy`, baselines | P7 | 🟡 |
 | **Handoff doc** view (regenerable) | §13.5, §13.7 | `HandoffGenerator` (lineage) + read | P7 | 🟡 |
 | Expand-context / SelectionDecision trace | §13.6 | lineage Context Compiler | P7 | 🟡 |
@@ -821,6 +825,8 @@ The honesty gate. Every UI capability ↔ its DESIGN section ↔ its IPC/seam ba
 | Team: bundle export/import; unified team DAG | §19 | `.spork-bundle` graft | P9 | 🟡 |
 | Rich card title/summary/diff-stat/stale-reason | §14.5 | additive `graph_view` fields (read-only, no schema change) | F3-UI+ | 🟡 |
 | Live co-editing / presence | §19 (deferred) | CRDT event variants | post-P9 | ⛔ deferred |
+
+> **Footnote on the 🟢 P6 agent-run / routing / cost rows.** The desktop app (`app/src-tauri`) opens each project with `grant_model_access().with_agent_config(AgentConfig::with_default_local())`, so the read-only agent run, routing, privacy refusal, and cost ledger are genuinely live **against a local OpenAI-compatible server** (Ollama/LM Studio/vLLM/LiteLLM on `127.0.0.1:11434`) or a configured CLI agent — a local model server must be running. A **cloud** model still needs the deferred **TLS** transport, so selecting a cloud model with no local fallback surfaces an honest "all providers failed" activity line rather than a silent no-op. (A Settings surface to configure the endpoint/CLI is a small follow-up.)
 | Graphical custom-node authoring UI | §9 (deferred) | authoring surface | beyond P8 | ⛔ deferred |
 
 > **Removed from the current UI** (present today but not plan-mappable as live actions): the vague **View**, **Analyze**, and **Metadata** toolbar buttons. "View" duplicates node selection; "Analyze" has no implemented runner; "Metadata" becomes the **Info** tab. None map to a built command, so they go. (Earlier jargon — *Recalibrate / Create DT / Submit DT / Create Process* from the reference image — was already removed.)
@@ -834,6 +840,10 @@ This section designs **every** UI surface for the not-yet-built phases to the sa
 > Reading guide: each phase below lists *what unlocks it* (the backing the plan must build), then the surfaces. The DESIGN § citations are authoritative for behavior.
 
 ### 14.1 P6 — Multi-provider routing, cost ledger & agent conversations
+
+> **✅ SHIPPED in P6 (now 🟢, moved to the main body):** the model selector (provider/model keys), the **Ask-agent** modal + the read-only `NODE_AGENT_RUN` run that **attaches** a priced `agent-context` node by a dotted `DERIVED_FROM` edge (DESIGN §6.6), multi-provider routing + hot-swap + privacy refusal (the modal's local-only toggle), and the per-node + per-branch **cost ledger** (`NodeView.cost` → Info tab + status-strip *spend*). Backed by `spork-transport` (subprocess + plaintext-HTTP) and `spork-agent`.
+>
+> **Still 🟡 (the mockups below remain the target):** the **live token-streaming Conversation** surface (needs a *streaming* transport emitting `CHAT_TOKENS`; P6 ships non-streaming runs), the **composer that mutates code** + **fork-on-divergence** (needs the P8 tiered executors / tool loop), a **TLS** transport for cloud endpoints, and a per-node **budget** editing UI. The Conversation/composer mockups in (d)/(e) below are for those phases.
 
 **Unlocked by P6:** `ModelRouter` resolving `ModelSelector` (`pinned|policy|inheritFromParent`) over OpenAI-compat / local (Ollama/LM Studio) / CLI adapters, with fallback + circuit-breaker; capability negotiation (`json_emulated` tool-calls); the `CostAccountant` (cache-aware: read 0.1×, write 1.25–2×); `PrivacyClass` enforcement; per-node token/USD budget; and — critically — a provider that **emits `CHAT_TOKENS`**, which finally makes the conversation surface real. The **agent-run path also activates auto-branching** (DESIGN §6.6): asking the agent to *change* code from a non-tip node auto-forks a branch (from the tip, it continues); asking for *analyze/plan* attaches a read-only node via a dotted `DERIVED_FROM` edge. (DESIGN §5.4, §6.6, §12.1–12.5, §15.5, §9.3.)
 
