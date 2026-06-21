@@ -37,6 +37,15 @@ spork-exec = { path = "../spork-exec" }
 spork-runner = { path = "../spork-runner" }
 spork-merge = { path = "../spork-merge" }
 spork-nodes = { path = "../spork-nodes" }
+# P6: `node.agentRun` resolves a model through the multi-provider router, invokes
+# it over a transport, prices the turn, and attaches the answer (DESIGN §6.6,
+# §12.x). The router/adapters/privacy live in spork-provider, the agent loop in
+# spork-agent, the I/O channel in spork-transport, and cache-aware pricing in
+# spork-cost.
+spork-provider = { path = "../spork-provider" }
+spork-agent = { path = "../spork-agent" }
+spork-transport = { path = "../spork-transport" }
+spork-cost = { path = "../spork-cost" }
 
 ulid = { workspace = true, features = ["serde"] }
 serde = { workspace = true }

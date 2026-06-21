@@ -70,6 +70,7 @@ pub(crate) fn build_graph_view(core: &DaemonCore) -> GraphView {
             branch_id: env.branch_id.clone(),
             parent_ids: env.parent_ids.clone(),
             model: env.model.clone(),
+            cost: env.cost.clone().map(Into::into),
         })
         .collect();
 

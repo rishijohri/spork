@@ -3150,6 +3150,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "spork-agent"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "spork-cost",
+ "spork-graph",
+ "spork-provider",
+ "spork-transport",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "spork-app"
 version = "0.1.0"
 dependencies = [
@@ -3211,6 +3223,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "spork-cost"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "spork-graph",
+]
+
+[[package]]
 name = "spork-daemon"
 version = "0.1.0"
 dependencies = [
@@ -3219,10 +3239,12 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
+ "spork-agent",
  "spork-asset",
  "spork-broker",
  "spork-canon",
  "spork-cas",
+ "spork-cost",
  "spork-drift",
  "spork-edges",
  "spork-exec",
@@ -3236,11 +3258,13 @@ dependencies = [
  "spork-migrate",
  "spork-nodes",
  "spork-projection",
+ "spork-provider",
  "spork-registry",
  "spork-restore",
  "spork-runner",
  "spork-status",
  "spork-stream",
+ "spork-transport",
  "spork-vault",
  "tempfile",
  "thiserror 2.0.18",
@@ -3488,6 +3512,14 @@ dependencies = [
  "spork-log",
  "thiserror 2.0.18",
  "ulid",
+]
+
+[[package]]
+name = "spork-transport"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

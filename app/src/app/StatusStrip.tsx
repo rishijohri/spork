@@ -7,7 +7,7 @@
 
 import type { JSX } from "react";
 import { useUiStore } from "../state/store";
-import { shortId } from "../ui/format";
+import { shortId, formatMicroUsd } from "../ui/format";
 
 const CONN_LABEL: Record<string, string> = {
   connected: "connected",
@@ -27,6 +27,14 @@ export function StatusStrip({ onRetry }: { onRetry?: () => void }): JSX.Element 
     view.refs.find((r) => r.kind === "Branch" && r.target === headTarget)?.name ??
     "main";
 
+  // The per-branch cost ledger (P6, §12.5): sum the priced cost of every node on
+  // the current branch. Zero/absent costs contribute nothing.
+  const branchMicroUsd = view.nodes.reduce(
+    (sum, n) =>
+      n.branchId === currentBranch && n.cost ? sum + n.cost.microUsd : sum,
+    0,
+  );
+
   return (
     <footer className="spork-substrip" aria-label="Status">
       <span className="spork-conn" data-state={connection}>
@@ -45,6 +53,10 @@ export function StatusStrip({ onRetry }: { onRetry?: () => void }): JSX.Element 
       <span className="spork-substrip-sep">·</span>
       <span>
         <span className="mono">{view.nodes.length}</span> nodes
+      </span>
+      <span className="spork-substrip-sep">·</span>
+      <span title="Total priced model spend on this branch (P6 cost ledger)">
+        spend <span className="mono">{formatMicroUsd(branchMicroUsd)}</span>
       </span>
       <span className="spork-substrip-sep">·</span>
       <span>

@@ -273,7 +273,15 @@ impl GraphProjection {
         // Store the payload as canonical bytes so the stored BLOB is byte-stable
         // and re-canonicalization on a rebuild reproduces the same digest.
         let payload_canon = spork_canon::canonicalize_value(&p.payload)?;
-        let cost_json: Option<String> = None; // cost is set via status/attribution flows, not at creation in F2
+        // P6: a node may carry a `cost` object in its payload — an agent-run
+        // records the priced CostRecord of the model turn that produced it (the
+        // companion of the `model` attribution F2 already extracts). Lift it into
+        // the materialized `cost` column here, in the projection fold. The cost
+        // lives inside the already-canonical payload, so this changes no
+        // hash-chained event bytes and re-extraction on a rebuild reproduces the
+        // same value (the pure-projection property; DESIGN §5.4, §12.5). Absent or
+        // malformed → None, exactly as in F2.
+        let cost_json: Option<String> = extract_cost_json(&p.payload);
 
         self.conn
             .execute(
@@ -790,6 +798,24 @@ fn parse_opt_hash(s: Option<&str>) -> Result<Option<Hash>> {
 
 fn parse_cost(s: &str) -> Result<CostRecord> {
     serde_json::from_str(s).map_err(|e| GraphError::Log(format!("invalid cost record {s:?}: {e}")))
+}
+
+/// Extract a node's optional `cost` payload field as the JSON the `cost` column
+/// stores (read back by [`parse_cost`]).
+///
+/// An agent-run node records the priced [`CostRecord`] of its model turn inside
+/// its type-specific payload. Cost is derived **purely in this projection fold**
+/// from the payload (no `cost` field on the `graph.node_created` event, no
+/// event-bytes change) — intentionally *more* pure-projection than the `model`
+/// column, which the service layer (`spork_graph::service::extract_model`)
+/// persists onto `NodeCreatedPayload.model` and the fold then copies verbatim.
+/// This validates the shape by round-tripping through [`CostRecord`], so only a
+/// well-formed record is stored; an absent or malformed `cost` yields `None`,
+/// leaving the column null exactly as in F2.
+fn extract_cost_json(payload: &serde_json::Value) -> Option<String> {
+    let value = payload.get("cost")?;
+    let cost: CostRecord = serde_json::from_value(value.clone()).ok()?;
+    serde_json::to_string(&cost).ok()
 }
 
 #[cfg(test)]

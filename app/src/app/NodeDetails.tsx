@@ -16,7 +16,8 @@ import { useNodeDiff } from "../state/queries";
 import { descriptorFor } from "../canvas/descriptors";
 import { dispatch } from "../ipc/client";
 import { Icon } from "../ui/icons";
-import { shortId, humanizeModel, effectiveStatus } from "../ui/format";
+import { IconButton } from "../ui/Button";
+import { shortId, humanizeModel, formatMicroUsd, effectiveStatus } from "../ui/format";
 import type { NodeView } from "../ipc/types";
 
 const DiffEditor = lazy(async () => {
@@ -52,6 +53,7 @@ export function NodeDetails(): JSX.Element {
   const selectedId = useUiStore((s) => s.selectedNodeId);
   const view = useUiStore((s) => s.view);
   const selectNode = useUiStore((s) => s.selectNode);
+  const openModal = useUiStore((s) => s.openModal);
   const [tab, setTab] = useState<Tab>("changes");
 
   const node: NodeView | null =
@@ -91,6 +93,11 @@ export function NodeDetails(): JSX.Element {
           <Icon name="copy" size={11} />
         </button>
         <div style={{ flex: 1 }} />
+        <IconButton
+          icon="messages-square"
+          label="Ask the agent about this node"
+          onClick={() => openModal({ kind: "askAgent", nodeId: node.id })}
+        />
         <span
           className="spork-status"
           data-status={eff.status}
@@ -263,6 +270,19 @@ function InfoTab({
         <dd>{node.branchId}</dd>
         <dt>Model</dt>
         <dd>{node.model ? humanizeModel(node.model) : "—"}</dd>
+        <dt>Cost</dt>
+        <dd>
+          {node.cost ? (
+            <span title={`${node.cost.inputTokens} in / ${node.cost.outputTokens} out tokens`}>
+              {formatMicroUsd(node.cost.microUsd)}{" "}
+              <span className="spork-faint">
+                ({node.cost.inputTokens}↑/{node.cost.outputTokens}↓)
+              </span>
+            </span>
+          ) : (
+            <span className="spork-faint">—</span>
+          )}
+        </dd>
         <dt>Snapshot</dt>
         <dd>
           {node.ownsSnapshot ? (
@@ -286,9 +306,10 @@ function InfoTab({
         </dd>
       </dl>
       <p className="spork-fwd-note">
-        Conversation (P6), detailed results &amp; run history (P7), cost, handoff,
-        and effects-log surfaces are designed but not yet built — see
-        UI_UX_DESIGN.md §14. A check's pass/fail shows on its canvas card today.
+        Live conversation streaming (needs a streaming transport), detailed results
+        &amp; run history (P7), handoff, and effects-log surfaces are designed but
+        not yet built — see UI_UX_DESIGN.md §14. Per-node model + cost are live
+        (P6); a check's pass/fail shows on its canvas card today.
       </p>
     </>
   );

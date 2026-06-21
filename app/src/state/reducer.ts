@@ -41,6 +41,7 @@ function placeholderNode(id: Ulid): NodeView {
     branchId: "main",
     parentIds: [],
     model: null,
+    cost: null,
   };
 }
 
@@ -135,11 +136,17 @@ export function applyOpLogEvent(
             : placeholderNode(ev.to),
         ];
       }
-      nodes = nodes.map((n) =>
-        n.id === ev.to && !n.parentIds.includes(ev.from)
-          ? { ...n, parentIds: [...n.parentIds, ev.from] }
-          : n,
-      );
+      // DERIVED_FROM is an *attachment* (a read-only agent/context node attached
+      // to the node it describes), not lineage — it must NOT add a parent link,
+      // or the attached node would be laid out as a code ancestor (DESIGN §6.3,
+      // §6.6). Every other edge records the parent relation the layout uses.
+      if (ev.edge !== "DERIVED_FROM") {
+        nodes = nodes.map((n) =>
+          n.id === ev.to && !n.parentIds.includes(ev.from)
+            ? { ...n, parentIds: [...n.parentIds, ev.from] }
+            : n,
+        );
+      }
       return {
         ...state,
         nodes,

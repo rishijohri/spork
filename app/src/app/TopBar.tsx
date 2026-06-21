@@ -15,13 +15,17 @@ import { SettingsPopover } from "./overlays/SettingsPopover";
 import { humanizeModel } from "../ui/format";
 import type { NodeView } from "../ipc/types";
 
-/** Default-model choices (flat in v1; provider grouping + cost is P6). */
+/**
+ * Model choices, as `provider/model` selector keys (P6 multi-provider routing).
+ * The selector sets the default an agent run uses; the router resolves the key to
+ * a provider (privacy enforced) and prices the turn. Local + CLI run offline.
+ */
 export const MODELS = [
-  "claude-opus-4-8",
-  "claude-sonnet-4-6",
-  "claude-haiku-4-5",
-  "gpt-4o",
-  "ollama/llama3.1",
+  "anthropic/claude-opus-4-8",
+  "anthropic/claude-sonnet-4-6",
+  "openai/gpt-4o",
+  "local/llama3.1",
+  "cli/copilot-cli",
 ] as const;
 
 const CONN_LABEL: Record<string, string> = {

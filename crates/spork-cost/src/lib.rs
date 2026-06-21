@@ -128,11 +128,23 @@ impl CostAccountant {
     #[must_use]
     pub fn with_builtin_pricing() -> Self {
         let mut acc = CostAccountant::empty();
-        // Anthropic Claude: $3 in / $15 out per Mtok; cache read 0.1×, write 1.25×.
+        // Anthropic Claude (Sonnet tier): $3 in / $15 out per Mtok; cache read
+        // 0.1×, write 1.25×. Priced under every Sonnet key the UI/router offer so a
+        // resolved cloud turn is never silently free.
+        for sonnet in ["claude-3-5-sonnet", "claude-sonnet-4-6"] {
+            acc.insert(ModelPricing {
+                model_key: sonnet.into(),
+                input_micro_usd_per_mtok: 3_000_000,
+                output_micro_usd_per_mtok: 15_000_000,
+                cache_read_permille: 100,
+                cache_write_permille: 1250,
+            });
+        }
+        // Claude Opus tier: $15 in / $75 out per Mtok.
         acc.insert(ModelPricing {
-            model_key: "claude-3-5-sonnet".into(),
-            input_micro_usd_per_mtok: 3_000_000,
-            output_micro_usd_per_mtok: 15_000_000,
+            model_key: "claude-opus-4-8".into(),
+            input_micro_usd_per_mtok: 15_000_000,
+            output_micro_usd_per_mtok: 75_000_000,
             cache_read_permille: 100,
             cache_write_permille: 1250,
         });
@@ -274,6 +286,17 @@ mod tests {
             acc.cache_savings_micro_usd("claude-3-5-sonnet", &usage),
             3_000_000 - 300_000
         );
+    }
+
+    #[test]
+    fn ui_offered_claude_models_are_priced_not_free() {
+        // The keys the UI/router actually resolve to must carry pricing, or a real
+        // cloud turn would silently price $0 in the cost ledger.
+        let acc = CostAccountant::with_builtin_pricing();
+        let sonnet = acc.cost_for("claude-sonnet-4-6", &Usage::new(1_000, 500));
+        assert_eq!(sonnet.micro_usd, 3_000 + 7_500); // $3 in / $15 out
+        let opus = acc.cost_for("claude-opus-4-8", &Usage::new(1_000, 500));
+        assert_eq!(opus.micro_usd, 15_000 + 37_500); // $15 in / $75 out
     }
 
     #[test]

@@ -54,6 +54,15 @@ pub const WORKTREE_GLOB: &str = "**";
 /// additively behind the same `CommandHandler` seam.
 pub const DAEMON_SCHEMA_VERSION: u16 = 1;
 
+/// The default `model.invoke` token budget granted by
+/// [`DaemonBuilder::grant_model_access`] — generous, for a local-first dev tool
+/// (the broker refuses a per-run request that exceeds it).
+const MODEL_TOKEN_BUDGET: u64 = 1_000_000_000;
+
+/// The default `model.invoke` USD budget (in micro-USD) granted by
+/// [`DaemonBuilder::grant_model_access`] — `$1000`.
+const MODEL_USD_BUDGET_MICROS: u64 = 1_000_000_000;
+
 /// All the privileged, single-threaded state a command may touch, owned behind
 /// one lock so a dispatch is an atomic critical section.
 ///
@@ -193,6 +202,18 @@ pub struct Daemon {
     /// §8.2, §9.2). Held outside the core lock (it is internally `Sync`) so a
     /// check's cache I/O never contends with a graph dispatch.
     pub(crate) result_cache: spork_runner::InMemoryResultCache,
+    /// The P6 multi-provider model router (`node.agentRun`): resolves a node's
+    /// selector to a concrete provider, enforcing privacy before any byte leaves
+    /// and exposing the fallback chain (DESIGN §12.1, §12.3). Held outside the
+    /// core lock — it is internally synchronized (its breaker is a `Mutex`).
+    pub(crate) router: spork_provider::MultiProviderRouter,
+    /// The P6 cache-aware cost accountant: prices a turn's token usage into the
+    /// canonical `CostRecord` attached to the agent-run's context node (DESIGN
+    /// §12.5). Immutable after construction.
+    pub(crate) accountant: spork_cost::CostAccountant,
+    /// The transports the daemon offers per provider (local HTTP server / CLI
+    /// agent). Cloud needs the deferred TLS transport (DESIGN §12.1).
+    pub(crate) agent_config: crate::agent::AgentConfig,
 }
 
 /// A builder for a [`Daemon`], for callers that need a custom grant set or vault
@@ -209,6 +230,7 @@ pub struct DaemonBuilder {
     grants: Vec<Grant>,
     ignore_profile: IgnoreProfile,
     scanner: SecretScanner,
+    agent_config: crate::agent::AgentConfig,
 }
 
 impl DaemonBuilder {
@@ -222,6 +244,7 @@ impl DaemonBuilder {
             grants: default_grants(),
             ignore_profile: IgnoreProfile::default_profile(),
             scanner: SecretScanner::default(),
+            agent_config: crate::agent::AgentConfig::default(),
         }
     }
 
@@ -251,6 +274,39 @@ impl DaemonBuilder {
     #[must_use]
     pub fn with_secret_scanner(mut self, scanner: SecretScanner) -> Self {
         self.scanner = scanner;
+        self
+    }
+
+    /// Set the P6 agent transports (which providers the daemon can reach: a local
+    /// HTTP server endpoint and/or a CLI agent command).
+    #[must_use]
+    pub fn with_agent_config(mut self, config: crate::agent::AgentConfig) -> Self {
+        self.agent_config = config;
+        self
+    }
+
+    /// Grant the daemon **model access** (opt-in): `model.invoke` (budget-bounded)
+    /// plus `net.connect` to the local model host(s).
+    ///
+    /// Model invocation reaches the network / spends money, so it stays
+    /// **denied by default** (DESIGN §15.1) — the default grants cover only
+    /// snapshot read/write + process spawn. A caller that wants `node.agentRun`
+    /// to run (the desktop app once a provider is configured, a test) opts in
+    /// here. The model budget is generous (this is a local-first dev tool); the
+    /// host allowlist is the local model servers only, so cloud egress still
+    /// requires a separate, explicit grant *and* the (deferred) TLS transport.
+    #[must_use]
+    pub fn grant_model_access(mut self) -> Self {
+        self.grants.push(Grant::new(
+            Capability::ModelInvoke,
+            Scope::new()
+                .with_token_budget(MODEL_TOKEN_BUDGET)
+                .with_usd_budget_micros(MODEL_USD_BUDGET_MICROS),
+        ));
+        self.grants.push(Grant::new(
+            Capability::NetConnect,
+            Scope::new().with_hosts(["localhost", "127.0.0.1"]),
+        ));
         self
     }
 
@@ -314,6 +370,9 @@ impl DaemonBuilder {
             events: EventStream::new(),
             ephemeral: EphemeralBus::new(),
             result_cache: spork_runner::InMemoryResultCache::new(),
+            router: crate::agent::default_router(),
+            accountant: crate::agent::default_accountant(),
+            agent_config: self.agent_config,
         })
     }
 }
@@ -397,6 +456,11 @@ pub(crate) fn register_builtins_into(graph: &mut GraphService) -> Result<(), Dae
             .register_descriptor(descriptor)
             .map_err(|e| DaemonError::Graph(e.to_string()))?;
     }
+    // P6: the context node an agent run attaches its answer as, registered
+    // through the same public registry path (DESIGN §6.6, §7.1, §9).
+    graph
+        .register_descriptor(crate::agent::agent_context_descriptor())
+        .map_err(|e| DaemonError::Graph(e.to_string()))?;
     Ok(())
 }
 

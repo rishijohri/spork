@@ -40,10 +40,18 @@ describe("descriptorFor", () => {
     expect(d.family).toBe("context");
   });
 
-  it("exposes exactly the six built-ins in the legend", () => {
-    expect(allDescriptors()).toHaveLength(6);
+  it("exposes the built-in node types in the legend (incl. P6 agent-context)", () => {
+    expect(allDescriptors()).toHaveLength(7);
     expect(Object.keys(BUILTIN_DESCRIPTORS).sort()).toEqual(
-      ["codebase-edit", "merge", "sanity", "snapshot", "stress", "validation"].sort(),
+      [
+        "agent-context",
+        "codebase-edit",
+        "merge",
+        "sanity",
+        "snapshot",
+        "stress",
+        "validation",
+      ].sort(),
     );
   });
 });

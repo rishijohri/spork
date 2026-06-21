@@ -23,6 +23,7 @@ function node(over: Partial<NodeView> & Pick<NodeView, "id" | "kind">): NodeView
     branchId: "main",
     parentIds: [],
     model: null,
+    cost: null,
     ...over,
   };
 }

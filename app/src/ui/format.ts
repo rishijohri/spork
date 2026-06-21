@@ -19,6 +19,19 @@ export function humanizeModel(model: string | null): string {
   return bare;
 }
 
+/**
+ * Format an integer micro-USD spend as a compact dollar string (P6 cost ledger,
+ * §12.5). `0` → "free"; otherwise a `$`-prefixed amount with enough precision to
+ * show sub-cent spends a single local turn can incur.
+ */
+export function formatMicroUsd(microUsd: number): string {
+  if (microUsd <= 0) return "free";
+  const usd = microUsd / 1_000_000;
+  if (usd >= 1) return `$${usd.toFixed(2)}`;
+  if (usd >= 0.01) return `$${usd.toFixed(3)}`;
+  return `$${usd.toFixed(5)}`;
+}
+
 /** Humanize a SCREAMING_SNAKE edge type into a readable relation phrase. */
 export function humanizeEdge(edge: EdgeType): string {
   switch (edge) {

@@ -91,6 +91,14 @@ const BUILTIN_UI_CONTRIBUTIONS: Readonly<
     displayName: "Stress",
     family: "observing",
   },
+  // P6: the read-only agent run attaches its answer as a context node (DESIGN
+  // §6.6). Matches the daemon's agent_context_descriptor ui_contributions.
+  "agent-context": {
+    color: "#a78bfa",
+    icon: "messages-square",
+    displayName: "Agent",
+    family: "context",
+  },
 };
 
 /**

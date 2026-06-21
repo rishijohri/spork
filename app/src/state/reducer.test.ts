@@ -34,6 +34,21 @@ describe("applyOpLogEvent", () => {
     expect(created.nodes.find((n) => n.id === B)?.parentIds).toEqual([A]);
   });
 
+  it("does NOT record a parent link for a DERIVED_FROM (attachment) edge", () => {
+    // A read-only agent/context node attaches to the node it describes by a dotted
+    // DERIVED_FROM edge; it must NOT become a code-lineage parent of the target
+    // (DESIGN §6.3/§6.6) — contrast the PARENT_CHILD case above which does.
+    const next = reduceStream(EMPTY_VIEW, [
+      { type: "NODE_CREATED", seq: 1, nodeId: A, schemaVersion: 1 }, // target
+      { type: "NODE_CREATED", seq: 2, nodeId: B, schemaVersion: 1 }, // context node
+      { type: "EDGE_ADDED", seq: 3, from: B, to: A, edge: "DERIVED_FROM" },
+    ]);
+    // The edge is recorded (it styles dotted)...
+    expect(next.edges).toEqual([{ from: B, to: A, edgeType: "DERIVED_FROM" }]);
+    // ...but the target gains NO parent (the attachment is not lineage).
+    expect(next.nodes.find((n) => n.id === A)?.parentIds).toEqual([]);
+  });
+
   it("is idempotent on a duplicate EDGE_ADDED", () => {
     const e: OpLogEvent = {
       type: "EDGE_ADDED",

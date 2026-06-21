@@ -69,6 +69,11 @@ pub enum DaemonError {
     /// A filesystem operation outside a typed subsystem failed.
     #[error("io error: {0}")]
     Io(String),
+
+    /// A P6 agent run failed: selector resolution (incl. a privacy violation),
+    /// model invocation over the transport, or wire mapping (DESIGN.md §12.x).
+    #[error("agent error: {0}")]
+    Agent(String),
 }
 
 impl From<DaemonError> for IpcError {
@@ -87,7 +92,8 @@ impl From<DaemonError> for IpcError {
             | DaemonError::Vault(s)
             | DaemonError::Drift(s)
             | DaemonError::Log(s)
-            | DaemonError::Io(s) => IpcError::Graph(s),
+            | DaemonError::Io(s)
+            | DaemonError::Agent(s) => IpcError::Graph(s),
         }
     }
 }

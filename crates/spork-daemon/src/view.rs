@@ -78,6 +78,37 @@ pub struct NodeView {
     pub parent_ids: Vec<Ulid>,
     /// The model attributed to this node, if any.
     pub model: Option<String>,
+    /// The per-node cost record, if any (P6: an agent-run attaches its priced
+    /// cost; the renderer sums these for the per-branch ledger, DESIGN §12.5).
+    /// Additive view field (CLAUDE.md C5) — `None` for every node that carries
+    /// no cost, exactly as before.
+    pub cost: Option<CostView>,
+}
+
+/// The renderer-facing projection of a node's cost (P6, DESIGN §12.5).
+///
+/// A camelCase mirror of [`spork_graph::CostRecord`] for the TypeScript binding;
+/// every figure is an integer (tokens, micro-USD) so it round-trips through the
+/// canonical encoder that forbids floats.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CostView {
+    /// Total prompt/input tokens (uncached + cache read + write).
+    pub input_tokens: u64,
+    /// Completion/output tokens produced.
+    pub output_tokens: u64,
+    /// Total spend in micro-USD (millionths of a dollar), as an integer.
+    pub micro_usd: u64,
+}
+
+impl From<spork_graph::CostRecord> for CostView {
+    fn from(c: spork_graph::CostRecord) -> Self {
+        CostView {
+            input_tokens: c.input_tokens,
+            output_tokens: c.output_tokens,
+            micro_usd: c.micro_usd,
+        }
+    }
 }
 
 /// The renderer-facing projection of one typed edge.
@@ -145,6 +176,7 @@ mod tests {
                     branch_id: "main".into(),
                     parent_ids: vec![],
                     model: None,
+                    cost: None,
                 },
                 NodeView {
                     id: b,
@@ -157,6 +189,11 @@ mod tests {
                     branch_id: "main".into(),
                     parent_ids: vec![a],
                     model: Some("gpt".into()),
+                    cost: Some(CostView {
+                        input_tokens: 1_000,
+                        output_tokens: 200,
+                        micro_usd: 4_500,
+                    }),
                 },
             ],
             edges: vec![EdgeView {
@@ -190,6 +227,11 @@ mod tests {
         assert!(node.get("snapshotHash").is_some());
         assert!(node.get("parentIds").is_some());
         assert!(v["edges"][0].get("edgeType").is_some());
+        // The P6 cost view serializes camelCase under each node.
+        let priced = &v["nodes"][1]["cost"];
+        assert_eq!(priced["inputTokens"], 1_000);
+        assert_eq!(priced["outputTokens"], 200);
+        assert_eq!(priced["microUsd"], 4_500);
     }
 
     #[test]

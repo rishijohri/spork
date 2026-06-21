@@ -21,6 +21,7 @@
 //! | [`Command::BranchMerge`]  | `branch.merge`  | mutation |
 //! | [`Command::GitExport`]    | `git.export`    | action (inline) |
 //! | [`Command::GitPush`]      | `git.push`      | action (inline) |
+//! | [`Command::NodeAgentRun`] | `node.agentRun` | mutation |
 //!
 //! `NodeRunCheck`/`BranchMerge` are P5 additions (DESIGN.md §6.5, §8.1, §8.2):
 //! running an observing check against a node, and merging a branch via 3-way
@@ -63,6 +64,31 @@ use ulid::Ulid;
 /// optional field). A breaking change would instead introduce a *new* command
 /// generation rather than mutate this one in place (CLAUDE.md C2).
 pub const COMMAND_SCHEMA_VERSION: u16 = 1;
+
+/// The read-only intent of a P6 [`Command::NodeAgentRun`] agent turn.
+///
+/// All three are **read-only** (analysis/planning/asking): they invoke a model
+/// for context about a node and **attach** the answer as an observing context
+/// node — they never change code, so they auto-*attach* (a dotted edge, no branch)
+/// rather than fork (DESIGN.md §6.6). The code-changing agent run (which would
+/// fork-on-divergence and own a snapshot) needs the tiered executors and is P8 —
+/// adding its intent here is a future additive variant, so this enum is
+/// `#[non_exhaustive]`.
+///
+/// Serializes `snake_case` (`"ask"`, `"plan"`, `"analysis"`) to match the wire
+/// conventions of the surrounding command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum AgentRunIntent {
+    /// A free-form question about the node ("what does this do?").
+    #[default]
+    Ask,
+    /// Ask the model to produce a plan for changing the node (no change applied).
+    Plan,
+    /// Ask the model to analyze the node (review, summarize, audit).
+    Analysis,
+}
 
 /// A typed request from the renderer to the daemon.
 ///
@@ -259,6 +285,37 @@ pub enum Command {
         /// The remote to push to, or `None` to default to `origin`.
         remote: Option<String>,
     },
+
+    /// Run a **read-only** agent turn against a node (P6, DESIGN.md §6.6, §12.1,
+    /// §12.3, §12.5). A *mutation*: returns an `op_id`; the daemon resolves the
+    /// model through the multi-provider router (enforcing privacy), invokes it
+    /// over the configured transport, prices the turn, and **attaches** the
+    /// answer as an observing context node to the target via a dotted
+    /// [`DerivedFrom`](spork_graph::EdgeType::DerivedFrom) edge — recording the
+    /// model + cost on that node and emitting
+    /// [`OpLogEvent::NodeCreated`](crate::OpLogEvent::NodeCreated) +
+    /// [`OpLogEvent::EdgeAdded`](crate::OpLogEvent::EdgeAdded). The target is
+    /// never mutated and no branch is forked — a read-only run *attaches*
+    /// (DESIGN.md §6.6). Appended after the frozen variants, so their wire form is
+    /// unchanged (CLAUDE.md C2/C3).
+    NodeAgentRun {
+        /// The node the run observes / asks about. Its snapshot is never mutated;
+        /// the answer attaches as an observing context child (DESIGN.md §6.6).
+        target_node_id: Ulid,
+        /// The user's prompt for this turn.
+        prompt: String,
+        /// The model selector key: `"provider/model"` (e.g. `"openai/gpt-4o"`,
+        /// `"local/llama3.1"`), a bare model name (routes to the default
+        /// provider), or empty for the router's default. A free string so a new
+        /// provider/model needs no contract change (CLAUDE.md C3).
+        model_key: String,
+        /// The node's privacy class, as its `snake_case` token (`"any"`,
+        /// `"local_only"`, `"no_third_party_aggregator"`), or empty for `"any"`.
+        /// The router refuses a resolution this class forbids (DESIGN.md §12.5).
+        privacy: String,
+        /// The read-only intent of the run (DESIGN.md §6.6).
+        intent: AgentRunIntent,
+    },
 }
 
 impl Command {
@@ -331,6 +388,13 @@ mod tests {
                 into_ref: "main".into(),
                 from_node_id: b,
                 resolution: Some(serde_json::json!({"hunks": []})),
+            },
+            Command::NodeAgentRun {
+                target_node_id: a,
+                prompt: "what does this module do?".into(),
+                model_key: "openai/gpt-4o".into(),
+                privacy: "any".into(),
+                intent: AgentRunIntent::Ask,
             },
         ]
     }
@@ -475,6 +539,51 @@ mod tests {
         assert_eq!(mv["intoRef"], "main");
         assert_eq!(mv["fromNodeId"], from.to_string());
         assert!(mv["resolution"].is_null());
+    }
+
+    #[test]
+    fn node_agent_run_uses_tagged_camel_case_wire_form() {
+        let target = Ulid::new();
+        let cmd = Command::NodeAgentRun {
+            target_node_id: target,
+            prompt: "explain".into(),
+            model_key: "local/llama3.1".into(),
+            privacy: "local_only".into(),
+            intent: AgentRunIntent::Analysis,
+        };
+        let v = serde_json::to_value(&cmd).unwrap();
+        assert_eq!(v["command"], "NODE_AGENT_RUN");
+        assert_eq!(v["targetNodeId"], target.to_string());
+        assert_eq!(v["modelKey"], "local/llama3.1");
+        assert_eq!(v["privacy"], "local_only");
+        // The intent serializes snake_case.
+        assert_eq!(v["intent"], "analysis");
+    }
+
+    #[test]
+    fn node_agent_run_is_a_mutation() {
+        assert!(Command::NodeAgentRun {
+            target_node_id: Ulid::new(),
+            prompt: String::new(),
+            model_key: String::new(),
+            privacy: String::new(),
+            intent: AgentRunIntent::default(),
+        }
+        .is_mutation());
+    }
+
+    #[test]
+    fn agent_run_intent_round_trips_and_defaults_to_ask() {
+        assert_eq!(AgentRunIntent::default(), AgentRunIntent::Ask);
+        for (intent, tag) in [
+            (AgentRunIntent::Ask, "\"ask\""),
+            (AgentRunIntent::Plan, "\"plan\""),
+            (AgentRunIntent::Analysis, "\"analysis\""),
+        ] {
+            assert_eq!(serde_json::to_string(&intent).unwrap(), tag);
+            let back: AgentRunIntent = serde_json::from_str(tag).unwrap();
+            assert_eq!(back, intent);
+        }
     }
 
     #[test]

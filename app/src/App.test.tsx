@@ -24,6 +24,7 @@ function oneNodeView(): GraphView {
         branchId: "main",
         parentIds: [],
         model: "claude-sonnet-4-6",
+        cost: null,
       },
     ],
     edges: [],

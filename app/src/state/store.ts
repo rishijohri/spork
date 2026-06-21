@@ -16,7 +16,13 @@
 // stream — never the mutation's return value.
 
 import { create } from "zustand";
-import type { EphemeralFrame, GraphView, OpLogEvent, Ulid } from "../ipc/types";
+import type {
+  EphemeralFrame,
+  GraphView,
+  NodeView,
+  OpLogEvent,
+  Ulid,
+} from "../ipc/types";
 import { applyOpLogEvent, EMPTY_VIEW } from "./reducer";
 
 /** A pending optimistic mutation awaiting its op-log reconciliation. */
@@ -84,6 +90,8 @@ export type AppModal =
   | { kind: "push"; nodeId: Ulid }
   | { kind: "gc" }
   | { kind: "settings" }
+  /** Ask the agent about a node (P6 read-only run → attached context node). */
+  | { kind: "askAgent"; nodeId: Ulid }
   /** A denied capability surfaced honestly (§5.10e); inline grant is forward-map. */
   | { kind: "capability"; capability: string; action: string };
 
@@ -156,6 +164,13 @@ export interface UiState {
   resolveOptimistic: (opId: Ulid) => void;
   /** Fold one op-log event into the view-model and reconcile optimistic ops. */
   ingestEvent: (event: OpLogEvent) => void;
+  /**
+   * Upsert an agent-run's attached context node and its dotted `DERIVED_FROM`
+   * edge to `targetId`, from the authoritative `NODE_AGENT_RUN` reply (P6). The
+   * reply's `ids` carry the model + cost the minimal op-log events do not, so the
+   * cost/model show immediately rather than only after a full graph_view resync.
+   */
+  attachAgentNode: (node: NodeView, targetId: Ulid) => void;
   /** Buffer one ephemeral frame onto the node's rail (non-blocking). */
   ingestEphemeral: (frame: EphemeralFrame) => void;
   /**
@@ -220,9 +235,10 @@ function eventSubjectId(event: OpLogEvent): Ulid | null {
 const INITIAL = {
   view: EMPTY_VIEW,
   selectedNodeId: null as Ulid | null,
-  // The default model for new nodes; the top-bar selector defaults to this and
-  // it is one of TopBar's MODELS (DESIGN.md §14.2).
-  defaultModel: "claude-sonnet-4-6",
+  // The default model selector (a `provider/model` key); the top-bar selector
+  // defaults to this and it is one of TopBar's MODELS, and an agent run uses it
+  // as its selector (DESIGN.md §12.3, §14.2).
+  defaultModel: "anthropic/claude-sonnet-4-6",
   pending: {} as Record<Ulid, PendingOp>,
   rail: {} as RunRail,
   activity: [] as ActivityEntry[],
@@ -290,6 +306,26 @@ export const useUiStore = create<UiState>((set) => ({
         lastSeq: Math.max(s.lastSeq, event.seq),
         pending,
       };
+    }),
+
+  attachAgentNode: (node, targetId) =>
+    set((s) => {
+      const nodes = s.view.nodes.some((n) => n.id === node.id)
+        ? s.view.nodes.map((n) => (n.id === node.id ? node : n))
+        : [...s.view.nodes, node];
+      const hasEdge = s.view.edges.some(
+        (e) =>
+          e.from === node.id &&
+          e.to === targetId &&
+          e.edgeType === "DERIVED_FROM",
+      );
+      const edges = hasEdge
+        ? s.view.edges
+        : [
+            ...s.view.edges,
+            { from: node.id, to: targetId, edgeType: "DERIVED_FROM" as const },
+          ];
+      return { view: { ...s.view, nodes, edges } };
     }),
 
   ingestEphemeral: (frame) =>

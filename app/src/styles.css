@@ -1129,8 +1129,14 @@ textarea:focus-visible {
   color: var(--fg-muted);
 }
 .spork-field input,
-.spork-field select {
+.spork-field select,
+.spork-field textarea {
   width: 100%;
+}
+.spork-field textarea {
+  resize: vertical;
+  font: inherit;
+  min-height: 56px;
 }
 .spork-warn-box {
   display: flex;

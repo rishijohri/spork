@@ -29,6 +29,7 @@ function view(): GraphView {
         branchId: "main",
         parentIds: [],
         model: "openai/gpt-4o",
+        cost: null,
       },
       {
         id: CHECK,
@@ -41,6 +42,7 @@ function view(): GraphView {
         branchId: "feature-x",
         parentIds: [EDIT],
         model: null,
+        cost: null,
       },
     ],
     edges: [],
@@ -121,6 +123,22 @@ describe("NodeDetails", () => {
     expect(screen.getByText("Model")).toBeInTheDocument();
     // humanizeModel drops the provider prefix.
     expect(screen.getByText("gpt-4o")).toBeInTheDocument();
+  });
+
+  it("renders the per-node cost (P6) when the node carries one", () => {
+    // Seed a costed node (an agent-run attaches one) and assert the Cost row
+    // renders the formatted dollar amount + token up/down counts.
+    const v = view();
+    v.nodes[0]!.cost = { inputTokens: 1200, outputTokens: 300, microUsd: 8_100 };
+    useUiStore.getState().setView(v);
+    useUiStore.getState().selectNode(EDIT);
+    renderDetails();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Info" }));
+    expect(screen.getByText("Cost")).toBeInTheDocument();
+    // 8100 micro-USD = $0.00810 (sub-cent precision).
+    expect(screen.getByText("$0.00810")).toBeInTheDocument();
+    expect(screen.getByText("(1200↑/300↓)")).toBeInTheDocument();
   });
 
   it("Changes tab renders the changed-path buttons from NODE_DIFF", async () => {

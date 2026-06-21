@@ -82,6 +82,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+mod agent;
 mod core;
 mod dispatch;
 mod error;
@@ -91,14 +92,18 @@ mod nodes;
 mod read;
 mod view;
 
+pub use crate::agent::{AgentConfig, AGENT_CONTEXT_KIND};
 pub use crate::core::{Daemon, DaemonBuilder, DAEMON_SCHEMA_VERSION, WORKTREE_GLOB};
 pub use crate::error::DaemonError;
 pub use crate::feature::EventReceiver;
-pub use crate::view::{EdgeView, GraphView, NodeView, RefView, GRAPH_VIEW_SCHEMA_VERSION};
+pub use crate::view::{
+    CostView, EdgeView, GraphView, NodeView, RefView, GRAPH_VIEW_SCHEMA_VERSION,
+};
 
 // Re-export the contract vocabulary a headless client binds to, so it depends on
 // one crate (the daemon) rather than reaching into every leaf crate.
 pub use spork_graph::{EdgeType, Family, Lifecycle, RefKind};
 pub use spork_ipc::{
-    Command, CommandHandler, CommandResult, EphemeralChannel, EphemeralFrame, IpcError, OpLogEvent,
+    AgentRunIntent, Command, CommandHandler, CommandResult, EphemeralChannel, EphemeralFrame,
+    IpcError, OpLogEvent,
 };

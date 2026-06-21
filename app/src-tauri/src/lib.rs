@@ -43,7 +43,7 @@ use std::sync::Mutex;
 use std::thread;
 
 use serde_json::Value;
-use spork_daemon::Daemon;
+use spork_daemon::{AgentConfig, Daemon};
 use spork_ipc::{Command, CommandHandler, EphemeralFrame, OpLogEvent, Ulid};
 use tauri::{Emitter, Manager, State};
 
@@ -154,8 +154,15 @@ fn open_project(
     let self_tx = req_tx.clone();
 
     thread::spawn(move || {
-        // Construct the daemon ON the owner thread (it never leaves it).
-        let daemon = match Daemon::open(&path) {
+        // Construct the daemon ON the owner thread (it never leaves it). P6:
+        // grant model access (model.invoke + net.connect to the local model host)
+        // so `node.agentRun` works for the desktop user; cloud egress still needs
+        // a separate grant + the (deferred) TLS transport (DESIGN §15.1).
+        let daemon = match Daemon::builder(&path)
+            .grant_model_access()
+            .with_agent_config(AgentConfig::with_default_local())
+            .build()
+        {
             Ok(d) => d,
             Err(e) => {
                 let _ = boot_tx.send(Err(e.to_string()));

@@ -131,10 +131,52 @@ function defaultReplyFor(cmd: Command): CommandResult {
         commitSha: fakeSha(),
         pushed: true,
       };
+    case "NODE_AGENT_RUN": {
+      // Mirror the daemon's reply: a mutation whose `ids` carry the resolved
+      // provider/model + the priced cost, so the UI shows model + cost
+      // immediately (the minimal op-log events don't carry them).
+      const provider = cmd.modelKey.includes("/")
+        ? cmd.modelKey.split("/")[0]
+        : "anthropic";
+      const cost = mockAgentCost(cmd.modelKey);
+      return {
+        result: "MUTATION",
+        opId: fakeUlid(),
+        ids: {
+          nodeId: fakeUlid(),
+          provider,
+          model: cmd.modelKey || "anthropic/claude-sonnet-4-6",
+          costMicroUsd: cost.microUsd,
+          inputTokens: cost.inputTokens,
+          outputTokens: cost.outputTokens,
+          fallbacks: 0,
+          intent: cmd.intent,
+        },
+      };
+    }
     default:
       // Every other command is a mutation: reply with an op_id + minted ids.
       return { result: "MUTATION", opId: fakeUlid(), ids: mintedIdsFor(cmd) };
   }
+}
+
+/**
+ * A plausible priced cost for a mock agent run, keyed by the model. Cloud models
+ * cost something; a local server / CLI agent is free — matching the daemon's
+ * built-in pricing so the browser demo's cost ledger is representative.
+ */
+function mockAgentCost(modelKey: string): {
+  inputTokens: number;
+  outputTokens: number;
+  microUsd: number;
+} {
+  const inputTokens = 1200;
+  const outputTokens = 300;
+  let microUsd = 0;
+  if (modelKey.includes("gpt-4o")) microUsd = 1200 * 2.5 + 300 * 10; // $2.5/$10 per Mtok → micro
+  else if (modelKey.includes("claude") || modelKey === "") microUsd = 1200 * 3 + 300 * 15;
+  // local/* and cli/* stay free (microUsd = 0).
+  return { inputTokens, outputTokens, microUsd };
 }
 
 /**
@@ -289,6 +331,21 @@ function autoEmitFor(cmd: Command, reply: CommandResult): OpLogEvent[] {
     case "OP_REDO":
       events.push({ type: "OP_REDONE", seq: seq() });
       break;
+    case "NODE_AGENT_RUN":
+      // The attached context node + its dotted DERIVED_FROM edge are upserted by
+      // the action from the authoritative reply (model + cost). Emit just the
+      // NODE_CREATED so the optimistic op reconciles against the minted nodeId;
+      // the edge is NOT emitted (the upsert added it, and a DERIVED_FROM edge is
+      // an attachment, not a lineage link).
+      if (nodeId) {
+        events.push({
+          type: "NODE_CREATED",
+          seq: seq(),
+          nodeId,
+          schemaVersion: 1,
+        });
+      }
+      break;
     default:
       break;
   }
@@ -390,6 +447,7 @@ function demoNode(
   ownsSnapshot: boolean,
   parentIds: Ulid[],
   model: string | null,
+  cost: NodeView["cost"] = null,
 ): NodeView {
   return {
     id,
@@ -402,6 +460,7 @@ function demoNode(
     branchId: "main",
     parentIds,
     model,
+    cost,
   };
 }
 

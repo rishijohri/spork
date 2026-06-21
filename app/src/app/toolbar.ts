@@ -169,6 +169,15 @@ export function activityLineFor(
       return { level: "info", text: "Undid last operation" };
     case "OP_REDO":
       return { level: "info", text: "Redid operation" };
+    case "NODE_AGENT_RUN": {
+      if (res.result !== "MUTATION") return null;
+      const model =
+        typeof res.ids["model"] === "string" ? (res.ids["model"] as string) : command.modelKey;
+      const micro =
+        typeof res.ids["costMicroUsd"] === "number" ? (res.ids["costMicroUsd"] as number) : 0;
+      const cost = micro <= 0 ? "free" : `$${(micro / 1_000_000).toFixed(4)}`;
+      return { level: "success", text: `Asked agent on ${id} via ${model} · ${cost}` };
+    }
     default:
       return res.result === "MUTATION"
         ? { level: "success", text: "Done" }
@@ -196,6 +205,8 @@ export function capabilityForCommand(command: Command): string {
       return "snapshot.write";
     case "NODE_RUN_CHECK":
       return "process.spawn";
+    case "NODE_AGENT_RUN":
+      return "model.invoke";
     default:
       return "capability";
   }

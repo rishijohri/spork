@@ -48,6 +48,9 @@ export type EdgeType =
 /** spork-edges RefKind: serde default (PascalCase) — `"Head" | "Branch" | "Tag"`. */
 export type RefKind = "Head" | "Branch" | "Tag";
 
+/** spork-ipc AgentRunIntent: serde `snake_case`. The read-only P6 intents. */
+export type AgentRunIntent = "ask" | "plan" | "analysis";
+
 // --- View-model (crates/spork-daemon/src/view.rs) -----------------------------
 
 /** The renderer-facing projection of one node (a card on the canvas). */
@@ -63,6 +66,18 @@ export interface NodeView {
   branchId: string;
   parentIds: Ulid[];
   model: string | null;
+  /** The per-node cost (P6), or null. The per-branch ledger sums these. */
+  cost: CostView | null;
+}
+
+/** The renderer-facing projection of a node's cost (P6, DESIGN §12.5). */
+export interface CostView {
+  /** Total prompt/input tokens (uncached + cache read + write). */
+  inputTokens: number;
+  /** Completion/output tokens produced. */
+  outputTokens: number;
+  /** Total spend in micro-USD (millionths of a dollar), as an integer. */
+  microUsd: number;
 }
 
 /** The renderer-facing projection of one typed edge. */
@@ -122,7 +137,21 @@ export type Command =
   // casing matches the Rust serde `rename_all_fields = "camelCase"` (nodeId,
   // branch / nodeId, remote); the `Option<String>` fields are `string | null`.
   | { command: "GIT_EXPORT"; nodeId: Ulid; branch: string | null }
-  | { command: "GIT_PUSH"; nodeId: Ulid; remote: string | null };
+  | { command: "GIT_PUSH"; nodeId: Ulid; remote: string | null }
+  // P6 read-only agent run (DESIGN.md §6.6, §12.x). A mutation: resolves the
+  // model through the multi-provider router (privacy enforced), invokes it over a
+  // transport, prices the turn, and attaches the answer as a context node by a
+  // dotted DERIVED_FROM edge — recording model + cost. `modelKey` is the selector
+  // ("provider/model", a bare name, or "" for the router default); `privacy` is
+  // the snake_case class token ("any" | "local_only" | "no_third_party_aggregator").
+  | {
+      command: "NODE_AGENT_RUN";
+      targetNodeId: Ulid;
+      prompt: string;
+      modelKey: string;
+      privacy: string;
+      intent: AgentRunIntent;
+    };
 
 /** The command tag literal type, for exhaustive switching. */
 export type CommandTag = Command["command"];

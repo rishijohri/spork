@@ -86,6 +86,13 @@ impl Daemon {
             } => self.cmd_branch_merge(&into_ref, from_node_id, resolution),
             Command::GitExport { node_id, branch } => self.cmd_git_export(node_id, branch),
             Command::GitPush { node_id, remote } => self.cmd_git_push(node_id, remote),
+            Command::NodeAgentRun {
+                target_node_id,
+                prompt,
+                model_key,
+                privacy,
+                intent,
+            } => self.cmd_node_agent_run(target_node_id, &prompt, &model_key, &privacy, intent),
         }
     }
 

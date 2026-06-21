@@ -1,0 +1,20 @@
+[package]
+name = "spork-agent"
+version = "0.1.0"
+edition = "2021"
+description = "Spork P6 agent-turn orchestration: ties the frozen F4 model seam together end to end — resolve a ModelSelector through a ModelRouter (privacy enforced), render the canonical transcript with the right ProviderAdapter, carry it over a Transport, parse the reply back, extract token usage, and price it through the CostAccountant into a per-node CostRecord — with the router's fallback chain engaged on a transport failure (DESIGN §5.4, §12.1, §12.3, §12.5)."
+
+[dependencies]
+# The frozen model seam (canonical transcript, adapters, router, privacy).
+spork-provider = { path = "../spork-provider" }
+# Cache-aware pricing → the canonical CostRecord.
+spork-cost = { path = "../spork-cost" }
+# The CostRecord type the turn result carries (re-exported by spork-cost too, but
+# named directly here for clarity).
+spork-graph = { path = "../spork-graph" }
+# The transport seam this loop drives.
+spork-transport = { path = "../spork-transport" }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]

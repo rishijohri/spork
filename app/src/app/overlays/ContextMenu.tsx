@@ -108,6 +108,11 @@ function NodeMenu({ nodeId }: { nodeId: string }): JSX.Element {
         onClick={() => act(() => openModal({ kind: "restore", nodeId }))}
       />
       <Item
+        icon="messages-square"
+        label="Ask agent…"
+        onClick={() => act(() => openModal({ kind: "askAgent", nodeId }))}
+      />
+      <Item
         icon="play"
         label="Run validation"
         disabled={!mat}

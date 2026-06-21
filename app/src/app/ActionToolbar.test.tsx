@@ -30,6 +30,7 @@ function editNode(): NodeView {
     branchId: "main",
     parentIds: [],
     model: "gpt-4o",
+    cost: null,
   };
 }
 
@@ -45,6 +46,7 @@ function checkNode(): NodeView {
     branchId: "main",
     parentIds: [EDIT_ID],
     model: null,
+    cost: null,
   };
 }
 

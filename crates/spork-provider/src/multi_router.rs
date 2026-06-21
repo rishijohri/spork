@@ -14,14 +14,24 @@
 //! capabilities (native vs. json-emulated tools, caching, …) come from the same
 //! table the rest of the router consults (DESIGN.md §12.4).
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use crate::{
     CapabilityRegistry, Locality, ModelRouter, ModelSelector, PrivacyClass, ProviderError,
     ResolvedModel, SelectorMode, ANTHROPIC_PROVIDER_KEY, CLI_PROVIDER_KEY, LOCAL_PROVIDER_KEY,
     OPENAI_PROVIDER_KEY,
 };
+
+/// How long a tripped provider's breaker stays **open** before it is retried
+/// (half-open). A circuit *breaker* must close again — a breaker that never
+/// recovers is a latch that would permanently degrade a long-lived daemon after a
+/// single transient failure (DESIGN.md §12.3, §13 "policy + fallback + breaker").
+/// After this cooldown a tripped provider is offered again to fallback/policy; a
+/// fresh failure re-trips it. [`MultiProviderRouter::reset`] still clears it
+/// immediately.
+const BREAKER_COOLDOWN: Duration = Duration::from_secs(30);
 
 /// The provider key for an OpenAI-compatible **aggregator** (e.g. OpenRouter).
 ///
@@ -67,10 +77,11 @@ pub struct MultiProviderRouter {
     default_provider: String,
     /// The capability table consulted on every resolution (DESIGN.md §12.4).
     capabilities: CapabilityRegistry,
-    /// Circuit-breaker: providers tripped open by a failure (skipped by fallback
-    /// and policy selection until reset). Interior-mutable so the frozen
-    /// `&self` [`ModelRouter`] methods can record a trip.
-    tripped: Mutex<HashSet<String>>,
+    /// Circuit-breaker: each tripped provider mapped to *when* it tripped, so the
+    /// breaker can half-open after [`BREAKER_COOLDOWN`] rather than latch open
+    /// forever. Interior-mutable so the frozen `&self` [`ModelRouter`] methods can
+    /// record a trip.
+    tripped: Mutex<HashMap<String, Instant>>,
 }
 
 impl MultiProviderRouter {
@@ -97,7 +108,7 @@ impl MultiProviderRouter {
             ],
             default_provider: ANTHROPIC_PROVIDER_KEY.to_string(),
             capabilities: CapabilityRegistry::with_builtin_hints(),
-            tripped: Mutex::new(HashSet::new()),
+            tripped: Mutex::new(HashMap::new()),
         }
     }
 
@@ -108,7 +119,7 @@ impl MultiProviderRouter {
             bindings: Vec::new(),
             default_provider: default_provider.into(),
             capabilities: CapabilityRegistry::empty(),
-            tripped: Mutex::new(HashSet::new()),
+            tripped: Mutex::new(HashMap::new()),
         }
     }
 
@@ -126,16 +137,17 @@ impl MultiProviderRouter {
         self
     }
 
-    /// Trip a provider's breaker open (it is skipped by fallback/policy until
-    /// [`reset`](Self::reset)).
+    /// Trip a provider's breaker open. It is skipped by fallback/policy until the
+    /// [`BREAKER_COOLDOWN`] elapses (then half-opens and is retried) or
+    /// [`reset`](Self::reset) clears it.
     pub fn trip(&self, provider: &str) {
         self.tripped
             .lock()
             .expect("breaker mutex poisoned")
-            .insert(provider.to_string());
+            .insert(provider.to_string(), Instant::now());
     }
 
-    /// Reset (close) a provider's breaker.
+    /// Reset (close) a provider's breaker immediately.
     pub fn reset(&self, provider: &str) {
         self.tripped
             .lock()
@@ -143,13 +155,28 @@ impl MultiProviderRouter {
             .remove(provider);
     }
 
-    /// Whether a provider's breaker is currently tripped open.
+    /// Whether a provider's breaker is currently open (tripped within the last
+    /// [`BREAKER_COOLDOWN`]). An expired entry has half-opened and is pruned, so
+    /// the provider is retried.
     #[must_use]
     pub fn is_tripped(&self, provider: &str) -> bool {
-        self.tripped
-            .lock()
-            .expect("breaker mutex poisoned")
-            .contains(provider)
+        self.is_tripped_at(provider, Instant::now())
+    }
+
+    /// [`is_tripped`](Self::is_tripped) evaluated at an explicit instant — the
+    /// testable seam for breaker recovery without sleeping. Prunes an expired
+    /// entry (half-open) as a side effect.
+    fn is_tripped_at(&self, provider: &str, now: Instant) -> bool {
+        let mut tripped = self.tripped.lock().expect("breaker mutex poisoned");
+        match tripped.get(provider) {
+            Some(&at) if now.saturating_duration_since(at) < BREAKER_COOLDOWN => true,
+            Some(_) => {
+                // Cooldown elapsed: half-open — drop the trip so it is retried.
+                tripped.remove(provider);
+                false
+            }
+            None => false,
+        }
     }
 
     /// Split a `provider/model` key into `(provider, bare_model)`. A key with no
@@ -377,6 +404,31 @@ mod tests {
         let n3 = r.next_fallback(&n2).unwrap();
         assert_eq!(n3.provider, CLI_PROVIDER_KEY);
         assert!(r.next_fallback(&n3).is_none());
+    }
+
+    #[test]
+    fn breaker_half_opens_after_the_cooldown() {
+        // A tripped provider must recover (half-open) after BREAKER_COOLDOWN — a
+        // breaker that never closes is a latch that permanently degrades a
+        // long-lived daemon. Verified without sleeping via the `is_tripped_at` seam.
+        let r = MultiProviderRouter::with_builtin_providers();
+        r.trip(LOCAL_PROVIDER_KEY);
+        let now = Instant::now();
+        // Still open immediately and within the cooldown window.
+        assert!(r.is_tripped_at(LOCAL_PROVIDER_KEY, now));
+        assert!(r.is_tripped_at(
+            LOCAL_PROVIDER_KEY,
+            now + BREAKER_COOLDOWN - Duration::from_millis(1)
+        ));
+        // Past the cooldown it half-opens (and is pruned), so it is retried.
+        assert!(!r.is_tripped_at(
+            LOCAL_PROVIDER_KEY,
+            now + BREAKER_COOLDOWN + Duration::from_secs(1)
+        ));
+        assert!(
+            !r.is_tripped(LOCAL_PROVIDER_KEY),
+            "entry pruned after half-open"
+        );
     }
 
     #[test]
