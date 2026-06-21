@@ -112,6 +112,15 @@ impl Daemon {
             Command::NodeContext { node_id } => self.cmd_node_context(node_id),
             Command::NodeHandoff { node_id } => self.cmd_node_handoff(node_id),
             Command::HistoryQuery { request } => self.cmd_history_query(request),
+            Command::ProjectImport { branch_id, origin } => {
+                self.cmd_project_import(&branch_id, &origin)
+            }
+            Command::NodeAgentEdit {
+                target_node_id,
+                prompt,
+                model_key,
+                privacy,
+            } => self.cmd_node_agent_edit(target_node_id, &prompt, &model_key, &privacy),
         }
     }
 

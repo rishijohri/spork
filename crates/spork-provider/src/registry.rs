@@ -81,15 +81,11 @@ impl CapabilityRegistry {
             tool_calling: ToolCalling::JsonEmulated,
             source: CapSource::StaticTable,
         });
-        reg.insert(CapabilitySet {
-            model_key: "copilot-cli".into(),
-            parallel_tool_calls: false,
-            structured_output: false,
-            vision: false,
-            prompt_caching: false,
-            tool_calling: ToolCalling::JsonEmulated,
-            source: CapSource::StaticTable,
-        });
+        // The generic-CLI-as-model route is deprecated (REALIGNMENT_PLAN.md §2),
+        // so no fictional `copilot-cli` model is seeded here. A `cli/<command>`
+        // selector still resolves through the kept `CLI_PROVIDER_KEY` binding and
+        // falls back to the conservative default capabilities (JsonEmulated, no
+        // caps) — the safe assumption for an unknown conforming program.
         reg
     }
 

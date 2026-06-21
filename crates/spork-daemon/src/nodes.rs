@@ -953,8 +953,9 @@ impl Daemon {
     }
 
     /// Wrap a root tree in a Snapshot object (under the daemon's ignore profile
-    /// hash) and return the snapshot-object hash.
-    fn put_snapshot_over(&self, root_tree: Hash) -> Result<Hash, DaemonError> {
+    /// hash) and return the snapshot-object hash. `pub(crate)` so the P7.5 edit
+    /// loop (`crate::edit`) wraps its captured tree the same way.
+    pub(crate) fn put_snapshot_over(&self, root_tree: Hash) -> Result<Hash, DaemonError> {
         let core = self.core.lock().expect("daemon core mutex poisoned");
         let ignore_hash = core.ignore_profile.hash();
         let (hash, _stats) = core

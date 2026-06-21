@@ -46,6 +46,28 @@ use crate::error::DaemonError;
 /// the audit trail records the real scope used, not the grant envelope.
 pub const WORKTREE_GLOB: &str = "**";
 
+/// The hidden subdirectory of a project that holds Spork's own state (CAS, event
+/// log, vault, agent config) when the daemon is rooted at a real project
+/// directory via [`DaemonBuilder::for_project`] (P7.5 MVP). Excluded from capture
+/// so the content store never ingests itself (DESIGN.md §10.5).
+pub const STATE_SUBDIR: &str = ".spork";
+
+/// The ignore profile a project-rooted daemon captures under: the F0
+/// deps-excluded default profile **plus** the Spork state dir, so capturing the
+/// user's repo never walks into `.spork/` (where the CAS would otherwise ingest
+/// itself) while still seeing all of the user's files (DESIGN.md §10.5).
+///
+/// Additive over the frozen default profile (CLAUDE.md C2): it derives a *new*
+/// profile from the default patterns and does not mutate
+/// [`IgnoreProfile::default_profile`] or its hash. The resulting profile is
+/// stable across opens, so snapshot identity (diff/restore) is consistent for a
+/// given project.
+fn project_ignore_profile() -> IgnoreProfile {
+    let mut patterns: Vec<String> = IgnoreProfile::default_profile().patterns().to_vec();
+    patterns.push(format!("{STATE_SUBDIR}/"));
+    IgnoreProfile::from_patterns(patterns).unwrap_or_else(|_| IgnoreProfile::default_profile())
+}
+
 /// The schema version of the daemon's own configuration record (CLAUDE.md C5).
 ///
 /// The daemon persists no struct of its own beyond the records its subsystems
@@ -213,7 +235,13 @@ pub struct Daemon {
     pub(crate) accountant: spork_cost::CostAccountant,
     /// The transports the daemon offers per provider (local HTTP server / CLI
     /// agent). Cloud needs the deferred TLS transport (DESIGN §12.1).
-    pub(crate) agent_config: crate::agent::AgentConfig,
+    ///
+    /// Behind its own [`Mutex`] (not the core lock) so the desktop app can swap
+    /// the configured provider at runtime via
+    /// [`Daemon::set_agent_config`](crate::Daemon::set_agent_config) without
+    /// reopening the project (P7.5 MVP, W3). An agent run clones it out once at
+    /// the start so the (long, networked) turn never holds this lock.
+    pub(crate) agent_config: Mutex<crate::agent::AgentConfig>,
 }
 
 /// A builder for a [`Daemon`], for callers that need a custom grant set or vault
@@ -227,6 +255,10 @@ pub struct Daemon {
 /// deployment that grants `secrets.get` for a named handle).
 pub struct DaemonBuilder {
     root: PathBuf,
+    /// The working directory the daemon captures/restores. `None` defaults to
+    /// `<root>/work`; [`DaemonBuilder::for_project`] sets it to the real project
+    /// dir so capture sees the user's code, not an empty scratch dir.
+    workdir: Option<PathBuf>,
     grants: Vec<Grant>,
     ignore_profile: IgnoreProfile,
     scanner: SecretScanner,
@@ -241,11 +273,43 @@ impl DaemonBuilder {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         DaemonBuilder {
             root: root.into(),
+            workdir: None,
             grants: default_grants(),
             ignore_profile: IgnoreProfile::default_profile(),
             scanner: SecretScanner::default(),
             agent_config: crate::agent::AgentConfig::default(),
         }
+    }
+
+    /// Configure a builder for a real on-disk **project**: capture the user's
+    /// actual repo (`project_dir`) as the working tree while keeping Spork's own
+    /// state (CAS, event log, vault, agent config) under a hidden
+    /// `<project_dir>/.spork/` excluded from capture (P7.5 MVP, W2; DESIGN.md
+    /// §10.1, §10.5). This is the recommended entry point for the desktop app's
+    /// `open_project`, replacing the empty-scratch-dir default so a freshly opened
+    /// project can capture and render its real code.
+    ///
+    /// Additive over [`DaemonBuilder::new`] (CLAUDE.md C2): the default
+    /// `<root>/work` layout is untouched, and the ignore profile is derived from
+    /// (never mutates) the frozen default profile.
+    #[must_use]
+    pub fn for_project(project_dir: impl Into<PathBuf>) -> Self {
+        let project_dir = project_dir.into();
+        let state_dir = project_dir.join(STATE_SUBDIR);
+        let mut builder = DaemonBuilder::new(state_dir);
+        builder.workdir = Some(project_dir);
+        builder.ignore_profile = project_ignore_profile();
+        builder
+    }
+
+    /// Override the working directory the daemon captures/restores (default
+    /// `<root>/work`). [`DaemonBuilder::for_project`] sets this to the real
+    /// project dir; exposed for callers that keep state and working tree apart.
+    /// Additive (CLAUDE.md C2).
+    #[must_use]
+    pub fn with_workdir(mut self, workdir: impl Into<PathBuf>) -> Self {
+        self.workdir = Some(workdir.into());
+        self
     }
 
     /// Replace the broker's grant set wholesale (deny-by-default otherwise).
@@ -323,7 +387,10 @@ impl DaemonBuilder {
     /// Returns [`DaemonError`] if any backing store cannot be opened/created.
     pub fn build(self) -> Result<Daemon, DaemonError> {
         let root = self.root;
-        let workdir = root.join("work");
+        // The working tree defaults to `<root>/work` (the scratch layout), but a
+        // project-rooted daemon (`for_project`) captures the user's real repo
+        // instead (P7.5 MVP, W2).
+        let workdir = self.workdir.unwrap_or_else(|| root.join("work"));
         let cas_dir = root.join("cas");
         let vault_dir = root.join("vault");
         let log_path = root.join("log.db");
@@ -378,7 +445,7 @@ impl DaemonBuilder {
             result_cache: spork_runner::InMemoryResultCache::new(),
             router: crate::agent::default_router(),
             accountant: crate::agent::default_accountant(),
-            agent_config: self.agent_config,
+            agent_config: Mutex::new(self.agent_config),
         })
     }
 }

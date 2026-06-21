@@ -38,14 +38,20 @@
 //! that opens a node's run/chat surface can forward them.
 #![forbid(unsafe_code)]
 
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Sender};
 use std::sync::Mutex;
 use std::thread;
 
 use serde_json::Value;
-use spork_daemon::{AgentConfig, Daemon};
+use spork_daemon::{AgentConfig, Daemon, DaemonBuilder, STATE_SUBDIR};
 use spork_ipc::{Command, CommandHandler, EphemeralFrame, OpLogEvent, Ulid};
 use tauri::{Emitter, Manager, State};
+
+/// The file under `<project>/.spork/` that persists the user's chosen agent
+/// provider config across restarts (P7.5 MVP, W3). The endpoint/CLI command is
+/// provider *wiring*, not a secret (DESIGN.md §15.1), so it is stored plainly.
+const AGENT_CONFIG_FILE: &str = "agent_config.json";
 
 /// The window event name carrying an ordered [`OpLogEvent`](spork_ipc::OpLogEvent).
 pub const OPLOG_EVENT: &str = "oplog-event";
@@ -75,6 +81,14 @@ enum DaemonRequest {
     SubscribeNode {
         node_id: Ulid,
         reply: Sender<EphemeralReceiver>,
+    },
+    /// Swap the daemon's agent provider config at runtime and persist it under
+    /// `<project>/.spork/agent_config.json` (P7.5 MVP, W3). Handled on the owner
+    /// thread (the only holder of the non-`Send` [`Daemon`]); the reply carries a
+    /// persist failure so the renderer can surface it. [`AgentConfig`] is `Send`.
+    SetAgentConfig {
+        config: AgentConfig,
+        reply: Sender<Result<Value, String>>,
     },
 }
 
@@ -154,13 +168,23 @@ fn open_project(
     let self_tx = req_tx.clone();
 
     thread::spawn(move || {
-        // Construct the daemon ON the owner thread (it never leaves it). P6:
+        // The project's hidden state dir holds Spork's CAS/log/vault + the
+        // persisted agent config (P7.5 MVP, W2/W3).
+        let state_dir = PathBuf::from(&path).join(STATE_SUBDIR);
+        // Reload the user's previously-chosen provider, else the default local
+        // endpoint (W3). The file is absent on a first-ever open.
+        let agent_config =
+            load_agent_config(&state_dir).unwrap_or_else(AgentConfig::with_default_local);
+
+        // Construct the daemon ON the owner thread (it never leaves it). P7.5 W2:
+        // root at the user's REAL project dir (`for_project`), so capture sees
+        // their code and Spork's own state lives under `<project>/.spork/`. P6:
         // grant model access (model.invoke + net.connect to the local model host)
-        // so `node.agentRun` works for the desktop user; cloud egress still needs
-        // a separate grant + the (deferred) TLS transport (DESIGN §15.1).
-        let daemon = match Daemon::builder(&path)
+        // so agent runs work for the desktop user; cloud egress still needs a
+        // separate grant + the (deferred) TLS transport (DESIGN §15.1).
+        let daemon = match DaemonBuilder::for_project(&path)
             .grant_model_access()
-            .with_agent_config(AgentConfig::with_default_local())
+            .with_agent_config(agent_config)
             .build()
         {
             Ok(d) => d,
@@ -180,7 +204,7 @@ fn open_project(
 
         // Signal a successful open, then serve requests until the channel closes.
         let _ = boot_tx.send(Ok(()));
-        serve(&daemon, &req_rx);
+        serve(&daemon, &req_rx, &state_dir);
     });
 
     boot_rx
@@ -192,8 +216,9 @@ fn open_project(
 }
 
 /// The owner thread's request loop: serialize every reply on this thread so the
-/// non-`Send` daemon types never cross the channel.
-fn serve(daemon: &Daemon, rx: &mpsc::Receiver<DaemonRequest>) {
+/// non-`Send` daemon types never cross the channel. `state_dir` is the project's
+/// `.spork/` dir, where a runtime agent-config swap is persisted (W3).
+fn serve(daemon: &Daemon, rx: &mpsc::Receiver<DaemonRequest>, state_dir: &Path) {
     while let Ok(req) = rx.recv() {
         match req {
             DaemonRequest::Dispatch { command, reply } => {
@@ -201,9 +226,7 @@ fn serve(daemon: &Daemon, rx: &mpsc::Receiver<DaemonRequest>) {
             }
             DaemonRequest::GraphView { reply } => {
                 let view = daemon.graph_view();
-                let _ = reply.send(
-                    serde_json::to_value(view).map_err(|e| e.to_string()),
-                );
+                let _ = reply.send(serde_json::to_value(view).map_err(|e| e.to_string()));
             }
             DaemonRequest::SubscribeNode { node_id, reply } => {
                 // Only the owner thread holds the non-`Send` daemon; it makes
@@ -211,6 +234,72 @@ fn serve(daemon: &Daemon, rx: &mpsc::Receiver<DaemonRequest>) {
                 // forwarder (DESIGN.md §14.4).
                 let _ = reply.send(daemon.subscribe_node(node_id));
             }
+            DaemonRequest::SetAgentConfig { config, reply } => {
+                // Swap the live provider, then persist the choice so it survives
+                // a restart (W3). A persist failure is reported, not swallowed.
+                daemon.set_agent_config(config.clone());
+                let result = save_agent_config(state_dir, &config).map(|()| Value::Null);
+                let _ = reply.send(result);
+            }
+        }
+    }
+}
+
+/// Read the persisted agent config from `<state_dir>/agent_config.json`, or
+/// `None` if it is absent/unreadable (a first-ever open, or a corrupt file —
+/// either way the caller falls back to the default local endpoint).
+fn load_agent_config(state_dir: &Path) -> Option<AgentConfig> {
+    let bytes = std::fs::read(state_dir.join(AGENT_CONFIG_FILE)).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// Persist the agent config to `<state_dir>/agent_config.json`, creating the
+/// state dir if needed. Returns a stringified error the renderer can surface.
+fn save_agent_config(state_dir: &Path, config: &AgentConfig) -> Result<(), String> {
+    std::fs::create_dir_all(state_dir).map_err(|e| e.to_string())?;
+    let bytes = serde_json::to_vec_pretty(config).map_err(|e| e.to_string())?;
+    std::fs::write(state_dir.join(AGENT_CONFIG_FILE), bytes).map_err(|e| e.to_string())
+}
+
+/// The renderer-facing input shape of the `set_agent_config` command — a friendly
+/// `{ kind, endpoint?, command?, args? }` the Settings form sends, mapped to the
+/// internal [`AgentConfig`] (whose `cli_command` tuple is awkward to build in TS).
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentConfigInput {
+    /// `"local"` (HTTP endpoint) or `"cli"` (subprocess agent).
+    kind: String,
+    /// The local OpenAI-compatible endpoint URL (for `kind == "local"`).
+    endpoint: Option<String>,
+    /// The CLI agent program (for `kind == "cli"`).
+    command: Option<String>,
+    /// The CLI agent args (for `kind == "cli"`).
+    args: Option<Vec<String>>,
+}
+
+impl AgentConfigInput {
+    /// Map the renderer input to an [`AgentConfig`], applying the default local
+    /// endpoint when `"local"` is chosen with a blank URL.
+    fn into_config(self) -> Result<AgentConfig, String> {
+        match self.kind.as_str() {
+            "local" => {
+                let endpoint = self
+                    .endpoint
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or_else(|| AgentConfig::DEFAULT_LOCAL_ENDPOINT.to_string());
+                Ok(AgentConfig::with_endpoint(endpoint))
+            }
+            "cli" => {
+                let command = self
+                    .command
+                    .filter(|s| !s.trim().is_empty())
+                    .ok_or_else(|| "a CLI agent requires a command".to_string())?;
+                Ok(AgentConfig::with_cli_agent(
+                    command,
+                    self.args.unwrap_or_default(),
+                ))
+            }
+            other => Err(format!("unknown provider kind {other:?}")),
         }
     }
 }
@@ -310,6 +399,77 @@ fn graph_view(state: State<'_, AppState>) -> Result<Value, String> {
     handle.call(|reply| DaemonRequest::GraphView { reply })
 }
 
+/// Configure which provider agent runs reach — a local OpenAI-compatible HTTP
+/// endpoint (the default route) or a conforming CLI agent — and persist the
+/// choice (P7.5 MVP, W3). An app-local command (not a frozen `spork-ipc::Command`),
+/// consistent with the existing Tauri surface so the IPC boundary is untouched.
+/// (The generic CLI-as-model route is deprecated — REALIGNMENT_PLAN.md §2.)
+///
+/// `config` is the renderer's `{ kind, endpoint?, command?, args? }`
+/// ([`AgentConfigInput`]). The provider URL / CLI command is config, not a secret
+/// (DESIGN.md §15.1) — the renderer holds zero secrets.
+///
+/// # Errors
+/// Returns a string error if no project is open, the input is malformed/invalid,
+/// or persisting the choice fails.
+#[tauri::command]
+fn set_agent_config(state: State<'_, AppState>, config: Value) -> Result<(), String> {
+    let input: AgentConfigInput = serde_json::from_value(config).map_err(|e| e.to_string())?;
+    let agent_config = input.into_config()?;
+    let guard = state.handle.lock().map_err(|e| e.to_string())?;
+    let handle = guard.as_ref().ok_or("no project open")?;
+    handle.call(|reply| DaemonRequest::SetAgentConfig {
+        config: agent_config,
+        reply,
+    })?;
+    Ok(())
+}
+
+/// Open a path in the user's real editor (REALIGNMENT_PLAN §5d): Spork is **not**
+/// a code editor, so "Open codebase" hands off to VS Code / Cursor / Sublime /
+/// IntelliJ (or the OS default), exactly like Claude Desktop / the Copilot app.
+/// In-app Monaco stays read-only diff only.
+///
+/// `editor` is an optional explicit launcher (`code`/`cursor`/`subl`/`idea`); when
+/// absent the first detected editor on `PATH` is used, falling back to the OS
+/// file-opener (`open`/`xdg-open`/`explorer`). An app-local command, not a frozen
+/// `spork-ipc::Command` — the renderer holds no spawn authority of its own.
+///
+/// # Errors
+/// Returns a string error if no launcher can be spawned for the path.
+#[tauri::command]
+fn open_in_editor(path: String, editor: Option<String>) -> Result<(), String> {
+    use std::process::Command;
+
+    // An explicit editor wins; else probe the common CLIs; else the OS opener.
+    let candidates: Vec<String> = match editor.as_deref() {
+        Some(e) if !e.trim().is_empty() => vec![e.trim().to_string()],
+        _ => {
+            let mut v: Vec<String> = ["code", "cursor", "subl", "idea"]
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect();
+            // OS default file-opener as the last resort.
+            #[cfg(target_os = "macos")]
+            v.push("open".to_string());
+            #[cfg(target_os = "linux")]
+            v.push("xdg-open".to_string());
+            #[cfg(target_os = "windows")]
+            v.push("explorer".to_string());
+            v
+        }
+    };
+
+    let mut last_err = String::from("no editor launcher available");
+    for launcher in candidates {
+        match Command::new(&launcher).arg(&path).spawn() {
+            Ok(_) => return Ok(()),
+            Err(e) => last_err = format!("{launcher}: {e}"),
+        }
+    }
+    Err(format!("could not open editor for {path:?}: {last_err}"))
+}
+
 /// Build and run the Tauri application: manage [`AppState`] and register the
 /// command handlers.
 ///
@@ -321,6 +481,9 @@ fn graph_view(state: State<'_, AppState>) -> Result<Value, String> {
 /// this is the documented Tauri convention for `run`.
 pub fn run() {
     tauri::Builder::default()
+        // The native folder picker the onboarding flow uses to select a project
+        // dir (P7.5 MVP, W1). Gated by the `dialog:default` capability.
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             app.manage(AppState::default());
             Ok(())
@@ -329,7 +492,9 @@ pub fn run() {
             ping,
             open_project,
             dispatch,
-            graph_view
+            graph_view,
+            set_agent_config,
+            open_in_editor
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Spork Tauri application");
@@ -378,7 +543,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let daemon = Daemon::open(dir.path()).unwrap();
         let json = serde_json::to_value(daemon.graph_view()).unwrap();
-        assert_eq!(json["schemaVersion"], 1);
+        // R2 bumped GRAPH_VIEW_SCHEMA_VERSION to 2 (additive NodeView fields).
+        assert_eq!(json["schemaVersion"], 2);
         assert!(json["nodes"].is_array());
         assert!(json["edges"].is_array());
         assert!(json["refs"].is_array());
@@ -412,11 +578,71 @@ mod tests {
     }
 
     #[test]
+    fn agent_config_input_maps_local_and_cli() {
+        // The renderer's friendly shape maps to the internal AgentConfig.
+        let local: AgentConfigInput = serde_json::from_value(serde_json::json!({
+            "kind": "local",
+            "endpoint": "http://127.0.0.1:1234/v1/chat/completions"
+        }))
+        .unwrap();
+        let cfg = local.into_config().unwrap();
+        assert_eq!(
+            cfg.local_endpoint.as_deref(),
+            Some("http://127.0.0.1:1234/v1/chat/completions")
+        );
+        assert!(cfg.cli_command.is_none());
+
+        // A blank local endpoint falls back to the conventional default.
+        let blank: AgentConfigInput =
+            serde_json::from_value(serde_json::json!({ "kind": "local", "endpoint": "" })).unwrap();
+        assert_eq!(
+            blank.into_config().unwrap().local_endpoint.as_deref(),
+            Some(AgentConfig::DEFAULT_LOCAL_ENDPOINT)
+        );
+
+        let cli: AgentConfigInput = serde_json::from_value(serde_json::json!({
+            "kind": "cli",
+            "command": "my-cli-agent",
+            "args": ["--json"]
+        }))
+        .unwrap();
+        let cfg = cli.into_config().unwrap();
+        assert_eq!(
+            cfg.cli_command,
+            Some(("my-cli-agent".to_string(), vec!["--json".to_string()]))
+        );
+        assert!(cfg.local_endpoint.is_none());
+
+        // A CLI provider with no command is rejected; an unknown kind too.
+        let no_cmd: AgentConfigInput =
+            serde_json::from_value(serde_json::json!({ "kind": "cli" })).unwrap();
+        assert!(no_cmd.into_config().is_err());
+        let unknown: AgentConfigInput =
+            serde_json::from_value(serde_json::json!({ "kind": "nope" })).unwrap();
+        assert!(unknown.into_config().is_err());
+    }
+
+    #[test]
+    fn agent_config_persists_and_reloads() {
+        // W3: save then load round-trips the chosen provider through
+        // `<state>/agent_config.json` (what survives a project reopen).
+        let dir = tempfile::tempdir().unwrap();
+        let state_dir = dir.path().join(STATE_SUBDIR);
+        // Absent file → None (a first-ever open falls back to the default).
+        assert!(load_agent_config(&state_dir).is_none());
+
+        let cfg = AgentConfig::with_cli_agent("my-cli-agent", vec!["--json".into()]);
+        save_agent_config(&state_dir, &cfg).unwrap();
+        let loaded = load_agent_config(&state_dir).expect("config reloads");
+        assert_eq!(loaded.cli_command, cfg.cli_command);
+        assert_eq!(loaded.local_endpoint, cfg.local_endpoint);
+    }
+
+    #[test]
     fn do_dispatch_rejects_malformed_command_json() {
         let dir = tempfile::tempdir().unwrap();
         let daemon = Daemon::open(dir.path()).unwrap();
-        let err = do_dispatch(&daemon, serde_json::json!({ "command": "NOPE" }))
-            .unwrap_err();
+        let err = do_dispatch(&daemon, serde_json::json!({ "command": "NOPE" })).unwrap_err();
         assert!(!err.is_empty());
     }
 
@@ -510,7 +736,7 @@ mod tests {
             .send(DaemonRequest::GraphView { reply: gv_tx })
             .unwrap();
         let view = gv_rx.recv().unwrap().unwrap();
-        assert_eq!(view["schemaVersion"], 1);
+        assert_eq!(view["schemaVersion"], 2);
         assert_eq!(view["nodes"].as_array().unwrap().len(), 1);
 
         // SubscribeNode hands back a live receiver; the loop publishes one frame.
@@ -558,6 +784,10 @@ mod tests {
                     let _ = reply.send(frames);
                     // Publish after the subscription so the receiver observes it.
                     daemon.publish_ephemeral(node_id, channel, "tok");
+                }
+                DaemonRequest::SetAgentConfig { config, reply } => {
+                    daemon.set_agent_config(config);
+                    let _ = reply.send(Ok(Value::Null));
                 }
             }
         }

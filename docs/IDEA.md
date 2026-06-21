@@ -1,6 +1,8 @@
 # Spork — The Idea
 
 > **Purpose of this file.** A short, durable capture of *what Spork is and why it exists*, so the original intent is never lost as the code and the other docs grow. It is deliberately non-technical and stable. For the authoritative spec see [DESIGN.md](DESIGN.md); for what gets built when, see [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) and [TODO.md](TODO.md); for how it should look and feel, see [UI_UX_DESIGN.md](UI_UX_DESIGN.md).
+>
+> **Realignment note (2026-06).** Running the first MVP showed the UI had drifted *git-ward* (a branch sidebar, a branch switcher) and buried the spine — the **timeline of typed nodes**. The **timeline-first / node-centric / platform-inverted** refinement in [REALIGNMENT_PLAN.md](REALIGNMENT_PLAN.md) sharpens this vision; it does **not** change the bet. In one line: **Spork is the branching-timeline + sandbox + agent-orchestration layer that sits *on top of* the agents and editors you already use** — it connects to your agents over **MCP**, delegates editing to your **IDE**, and is not a git tool, not a code editor, and not a model host.
 
 ---
 
@@ -36,10 +38,10 @@ An adversarial prior-art sweep (refuters tasked with proving it already exists) 
 | | Dimension | In one line |
 |---|---|---|
 | **D1** | Project-level branching work-DAG | A persistent, content-addressed graph of typed lifecycle nodes — not chat history, not file-version history — as the single source of truth and primary surface. |
-| **D2** | Typed node types (+ user-definable) | First-class heterogeneous nodes — code-edit, validation/test, stress-test, deterministic auto-running sanity-check — plus a registry to define new types through the same contract the built-ins use. |
+| **D2** | Typed node types (+ user-definable) | First-class heterogeneous nodes in two families: **agentic** (Planning / Ask / Exploratory / Working — each an agent "mode" differing by its instructions, skills, tools, and MCP servers) and **deterministic action** (run-tests, stress, sanity, git-push/commit — repetitive actions as nodes recording shell output + result), plus code-edit/snapshot/merge — all through one registry users extend with the same contract the built-ins use. Every chat turn and every action is a node. |
 | **D3** | Per-node content-addressed restorable sandbox | Click any node to resolve its exact working tree; restore or branch from anywhere non-destructively, with every human and agent change attributed to a node. |
 | **D4** | Local-first, expandable to shared-team | Single-machine and private by default, expanding to teams by grafting content-addressed node+sandbox bundles onto one shared project DAG — the same machinery at wider scope, not a separate distributed system. |
-| **D5** | Multi-provider with fast switching | Claude, OpenAI, Copilot CLI, and local/Ollama are peers; model choice is per node, with cost attribution and a top-bar default selector. |
+| **D5** | Multi-provider + platform inversion | Two connectivity arrows: **Spork drives a model** for its own nodes (local/Ollama by default, cloud BYOK over TLS) — model choice per node with cost attribution; and **your agent drives Spork** — Claude Code / Copilot / Cursor connect over a write-capable **Orchestration MCP** (the "Spork Node skill") and create/run Spork nodes themselves. Agent CLIs are *not* impersonated as one-shot models (see [REALIGNMENT_PLAN.md](REALIGNMENT_PLAN.md) §2). |
 | **D6** | Lineage-aware managed context + handoff docs | Context is compiled from DAG lineage with cache-friendly ordering, and parent→child handoff documents are auto-generated so a fresh agent can start cold. |
 
 ## 6. The mental model in one diagram
@@ -81,7 +83,9 @@ An adversarial prior-art sweep (refuters tasked with proving it already exists) 
 ## 9. What Spork is *not* (non-goals)
 
 - **Not** a commercial land-grab. Free and open-source; adoption, not revenue, is the bar.
-- **Not** a Git replacement. It is git-aware and interoperates via a `.spork/` sidecar, never polluting real history.
+- **Not** a Git replacement. It is git-aware and interoperates via a `.spork/` sidecar, never polluting real history. A "branch" is an **emergent line** in the node DAG, never git chrome the user manages; `branch`/`HEAD`/`refs` survive only as internal tip/fork bookkeeping. Git push/commit are **action nodes**, not primary verbs (see [REALIGNMENT_PLAN.md](REALIGNMENT_PLAN.md)).
+- **Not** a code editor. "Open codebase" hands off to your real IDE (VS Code / Cursor) via open-in-editor, like Claude Desktop and the Copilot app; in-app Monaco is read-only diff viewing only. Spork is *additive* to the editor you already use.
+- **Not** a model host or an agent runtime. Spork drives a *model* only for its own in-app nodes (local HTTP, or BYOK over TLS); your **existing agents drive Spork** through a write-capable Orchestration MCP (the "Spork Node skill"). Agent CLIs are not impersonated as one-shot models.
 - **Not** execution-replay time-travel (rr/Pernosco-style, 10–20× overhead). Spork does *cheap snapshot* time-travel, not deterministic replay.
 - **Not** a bet on indexing/model breadth. Model connectivity is a thin, swappable adapter.
 - **Not** a promise that every branch runs in parallel. Worktrees share DBs/ports/Docker and storage balloons; the scheduler **serializes honestly** when resources conflict.

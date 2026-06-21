@@ -26,7 +26,13 @@ use spork_graph::{EdgeType, Family, Lifecycle, RefKind};
 use ulid::Ulid;
 
 /// The schema version of the [`GraphView`] read snapshot (CLAUDE.md C5).
-pub const GRAPH_VIEW_SCHEMA_VERSION: u16 = 1;
+///
+/// v2 (R2, REALIGNMENT_PLAN.md §5a) adds the additive `Option` `NodeView` fields
+/// `presentationStatus`/`lineLabel`/`forkedFrom`. **No migration is registered:**
+/// `GraphView` is a transient projection rebuilt on every read, never persisted —
+/// the version bump only signals the wider shape to a binding (same as the P6
+/// `cost` / P7 `gate` additions; PLAN §9 D-4 covers *persisted* schemas only).
+pub const GRAPH_VIEW_SCHEMA_VERSION: u16 = 2;
 
 /// A denormalized read snapshot of the whole work-DAG for the renderer.
 ///
@@ -87,6 +93,27 @@ pub struct NodeView {
     /// DESIGN §8.3). Additive view field (CLAUDE.md C5) — `None` for every
     /// non-gate node, exactly as before.
     pub gate: Option<GateVerdictView>,
+    /// The per-type **presentation status** this node carries in its own payload
+    /// (REALIGNMENT_PLAN.md §3b) — the rich agentic state (`thinking`,
+    /// `awaiting_input`, `require_review`, …) the frozen [`Lifecycle`] cannot
+    /// represent. Read kind-gated and best-effort (mirroring `gate`), so only
+    /// agentic nodes pay the payload fetch. **Additive view field (CLAUDE.md
+    /// C5)** — `None` for every node until the R3 agent-loop producer emits it;
+    /// the renderer falls back to `effective_status(status, is_stale)` for the
+    /// badge when it is absent.
+    pub presentation_status: Option<String>,
+    /// A friendly, human label for this node's **line** (lane) — the emergent
+    /// line a `branchId` denotes, never user-facing git chrome
+    /// (REALIGNMENT_PLAN.md §1). Lets the canvas swimlanes and the chat show one
+    /// consistent lane name instead of a raw id. Additive view field (CLAUDE.md
+    /// C5).
+    pub line_label: Option<String>,
+    /// The node this line **forked from** — `Some(parent)` iff this node starts a
+    /// new line (its `branchId` differs from its first parent's `branchId`), so
+    /// the canvas can draw the fork connector between lanes (REALIGNMENT_PLAN.md
+    /// §5a). `None` for a node continuing its parent's line. Additive view field
+    /// (CLAUDE.md C5).
+    pub forked_from: Option<Ulid>,
 }
 
 /// The renderer-facing projection of a gate verdict (P7, DESIGN §8.3).
@@ -232,6 +259,9 @@ mod tests {
                     model: None,
                     cost: None,
                     gate: None,
+                    presentation_status: None,
+                    line_label: Some("main".into()),
+                    forked_from: None,
                 },
                 NodeView {
                     id: b,
@@ -250,6 +280,9 @@ mod tests {
                         micro_usd: 4_500,
                     }),
                     gate: None,
+                    presentation_status: Some("thinking".into()),
+                    line_label: Some("agent · 01ABCDEF".into()),
+                    forked_from: Some(a),
                 },
             ],
             edges: vec![EdgeView {
@@ -288,6 +321,14 @@ mod tests {
         assert_eq!(priced["inputTokens"], 1_000);
         assert_eq!(priced["outputTokens"], 200);
         assert_eq!(priced["microUsd"], 4_500);
+        // The R2 additive view fields serialize camelCase, skip-if-none.
+        assert_eq!(v["schemaVersion"], 2);
+        let agentic = &v["nodes"][1];
+        assert_eq!(agentic["presentationStatus"], "thinking");
+        assert_eq!(agentic["lineLabel"], "agent · 01ABCDEF");
+        assert!(agentic.get("forkedFrom").is_some());
+        // A node continuing its line carries no fork origin.
+        assert_eq!(v["nodes"][0]["forkedFrom"], serde_json::Value::Null);
     }
 
     #[test]

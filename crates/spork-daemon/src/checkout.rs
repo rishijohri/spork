@@ -77,8 +77,9 @@ impl Daemon {
     /// continues it (DESIGN.md §6.6). Observing/context children (a sanity result,
     /// a gate verdict, an agent-context node) are attachments, not continuations,
     /// so they do not make a node a non-tip — only a [`Family::Mutating`] child
-    /// does. A non-existent node is an error.
-    fn node_is_tip(&self, node_id: Ulid) -> Result<bool, DaemonError> {
+    /// does. A non-existent node is an error. `pub(crate)` so the P7.5 edit loop
+    /// (`crate::edit`) applies the same §6.6 fork-on-divergence decision.
+    pub(crate) fn node_is_tip(&self, node_id: Ulid) -> Result<bool, DaemonError> {
         let core = self.core.lock().expect("daemon core mutex poisoned");
         let state = core
             .graph

@@ -33,6 +33,7 @@
 //! without it the run is refused, exactly like any other ungranted capability.
 
 use semver::Version;
+use serde::{Deserialize, Serialize};
 use spork_agent::{run_turn, user_prompt, TransportResolver};
 use spork_broker::{Capability, RequestedScope};
 use spork_cost::CostAccountant;
@@ -97,13 +98,21 @@ pub(crate) fn agent_context_descriptor() -> NodeTypeDescriptor {
 /// [`Transport`] seam (see `spork-transport`); they are intentionally
 /// unconfigured here, so a cloud resolution falls back to a configured local
 /// provider rather than reaching cloud without TLS.
-#[derive(Debug, Clone, Default)]
+///
+/// `Serialize`/`Deserialize` so the desktop app can persist the user's choice
+/// (a small JSON under `<project>/.spork/agent_config.json`) and reload it on the
+/// next open (P7.5 MVP, W3). The endpoint URL / CLI command is provider *wiring*,
+/// not a secret (the renderer holds zero secrets — DESIGN.md §15.1), so it is
+/// safe to persist in plaintext.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AgentConfig {
     /// The local OpenAI-compatible endpoint (e.g.
     /// `http://127.0.0.1:11434/v1/chat/completions`), if a local server is
     /// configured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local_endpoint: Option<String>,
     /// The CLI agent program + args, if a CLI agent is configured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cli_command: Option<(String, Vec<String>)>,
 }
 
@@ -121,9 +130,33 @@ impl AgentConfig {
         }
     }
 
+    /// A config pointing at a local OpenAI-compatible HTTP `endpoint` (e.g. an
+    /// Ollama / LM-Studio server) and no CLI agent (P7.5 MVP, W3).
+    #[must_use]
+    pub fn with_endpoint(endpoint: impl Into<String>) -> Self {
+        AgentConfig {
+            local_endpoint: Some(endpoint.into()),
+            cli_command: None,
+        }
+    }
+
+    /// A config pointing at a CLI agent `program` + `args` and no local endpoint
+    /// (P7.5 MVP, W3). The program must be a *conforming* agent that speaks
+    /// Spork's JSONL wire protocol — **not** a real coding CLI like
+    /// `claude`/`copilot` (which own their own tool loop; the generic
+    /// CLI-as-model route is deprecated — REALIGNMENT_PLAN.md §2).
+    #[must_use]
+    pub fn with_cli_agent(program: impl Into<String>, args: Vec<String>) -> Self {
+        AgentConfig {
+            local_endpoint: None,
+            cli_command: Some((program.into(), args)),
+        }
+    }
+
     /// The host of the configured local endpoint, for the `net.connect`
-    /// authorization (`None` if no local endpoint is set).
-    fn local_host(&self) -> Option<String> {
+    /// authorization (`None` if no local endpoint is set). `pub(crate)` so the
+    /// P7.5 edit loop (`crate::edit`) authorizes the same host.
+    pub(crate) fn local_host(&self) -> Option<String> {
         let ep = self.local_endpoint.as_deref()?;
         let rest = ep
             .strip_prefix("http://")
@@ -138,8 +171,9 @@ impl AgentConfig {
     }
 }
 
-/// The daemon's [`TransportResolver`] over its [`AgentConfig`].
-struct DaemonTransports<'a>(&'a AgentConfig);
+/// The daemon's [`TransportResolver`] over its [`AgentConfig`]. `pub(crate)` so
+/// the P7.5 edit loop (`crate::edit`) resolves transports the same way.
+pub(crate) struct DaemonTransports<'a>(pub(crate) &'a AgentConfig);
 
 impl TransportResolver for DaemonTransports<'_> {
     fn transport_for(
@@ -190,6 +224,15 @@ impl Daemon {
                 .branch_id
         };
 
+        // Snapshot the agent config once (it may be swapped at runtime via
+        // `set_agent_config`) so the long, networked turn below never holds the
+        // config lock (P7.5 MVP, W3).
+        let agent_config = self
+            .agent_config
+            .lock()
+            .expect("agent config mutex poisoned")
+            .clone();
+
         // Authorize model invocation (deny-by-default): the model spend itself,
         // plus the local server's network host if one is configured. A CLI agent
         // additionally spawns a process (covered by the default `process.spawn`).
@@ -197,10 +240,10 @@ impl Daemon {
             Capability::ModelInvoke,
             &RequestedScope::model(PER_RUN_TOKEN_CAP, PER_RUN_USD_MICROS),
         )?;
-        if let Some(host) = self.agent_config.local_host() {
+        if let Some(host) = agent_config.local_host() {
             self.authorize(Capability::NetConnect, &RequestedScope::host(host))?;
         }
-        if self.agent_config.cli_command.is_some() {
+        if agent_config.cli_command.is_some() {
             self.authorize(
                 Capability::ProcessSpawn,
                 &RequestedScope::path(crate::core::WORKTREE_GLOB),
@@ -218,7 +261,7 @@ impl Daemon {
         // Run the turn end to end (resolve → render → carry → parse → price),
         // with the router's fallback chain engaged on transport failure. A privacy
         // violation surfaces here as a hard error (nothing left the machine).
-        let transports = DaemonTransports(&self.agent_config);
+        let transports = DaemonTransports(&agent_config);
         let result = run_turn(
             &self.router,
             &transports,
@@ -227,11 +270,19 @@ impl Daemon {
             privacy,
             &input,
         )
-        .map_err(map_agent_error)?;
+        .map_err(|e| map_agent_error_for(e, &agent_config))?;
 
         let answer = extract_answer_text(&result.output);
         let cost_value = serde_json::to_value(&result.cost)
             .map_err(|e| DaemonError::Agent(format!("encode cost: {e}")))?;
+        // Bind the canonical transcript as a content-addressed `conversation_ref`
+        // so the node's conversation is retrievable via the History MCP
+        // (`get_node_transcript` reads `conversation_ref`) and the UI conversation
+        // surface — the same code+conversation binding the dual-restore guard
+        // understands (P7.5 MVP, W5; DESIGN.md §13.4, §13.7, §10.3). Without this
+        // the answer was stored inline only and `get_node_transcript` returned
+        // `None`.
+        let conversation_ref = self.store_transcript(&result.output)?;
         // The full provider/model key, for display + the cost ledger.
         let model_label = format!("{}/{}", result.provider, result.model_key);
         let intent_str = intent_label(intent);
@@ -243,6 +294,7 @@ impl Daemon {
             "model": model_label,
             "provider": result.provider,
             "answer": answer,
+            "conversation_ref": conversation_ref.to_hex(),
             "cost": cost_value,
         });
 
@@ -309,11 +361,37 @@ impl Daemon {
         })?;
         Ok(node_id)
     }
+
+    /// Replace the daemon's agent transport configuration at runtime (P7.5 MVP,
+    /// W3): which provider an agent run reaches — a local OpenAI-compatible HTTP
+    /// endpoint (the default route) and/or a conforming CLI agent. Takes effect on the next
+    /// run with no project reopen. The config is provider *wiring*, not a secret
+    /// (a URL / CLI command is config; the renderer holds zero secrets —
+    /// DESIGN.md §15.1), so the desktop app may persist it in plaintext.
+    pub fn set_agent_config(&self, config: AgentConfig) {
+        *self
+            .agent_config
+            .lock()
+            .expect("agent config mutex poisoned") = config;
+    }
+
+    /// Serialize a [`CanonicalTranscript`] to JSON and store it in the CAS,
+    /// returning the `conversation_ref` content hash the node payload binds
+    /// (DESIGN.md §13.4, §10.3). The stored JSON is what the History MCP's
+    /// `get_node_transcript` returns and the UI conversation surface renders.
+    fn store_transcript(
+        &self,
+        transcript: &CanonicalTranscript,
+    ) -> Result<spork_hash::Hash, DaemonError> {
+        let bytes = serde_json::to_vec(transcript)
+            .map_err(|e| DaemonError::Agent(format!("encode transcript: {e}")))?;
+        self.put_conversation(&bytes)
+    }
 }
 
 /// Map a [`spork_agent::AgentError`] into the daemon's taxonomy, preserving a
 /// privacy violation as a distinct, surfaced refusal (DESIGN.md §12.5).
-fn map_agent_error(err: spork_agent::AgentError) -> DaemonError {
+pub(crate) fn map_agent_error(err: spork_agent::AgentError) -> DaemonError {
     match err {
         spork_agent::AgentError::Provider(ProviderError::PrivacyViolation {
             requested,
@@ -325,11 +403,50 @@ fn map_agent_error(err: spork_agent::AgentError) -> DaemonError {
     }
 }
 
+/// The actionable guidance surfaced when an agent run fails while the daemon is
+/// configured to drive a **CLI agent as a model** — the deprecated
+/// generic-CLI-as-model route (REALIGNMENT_PLAN.md §2). Replaces the cryptic
+/// `... exited with status 1` a real coding CLI (`claude`/`copilot`) emits when
+/// fed Spork's private JSONL it cannot parse, pointing the user at the two real
+/// connectivity arrows instead.
+pub(crate) const CLI_AS_MODEL_GUIDANCE: &str =
+    "This looks like an agentic CLI, not a model endpoint. A coding-agent CLI \
+     (claude/copilot/cursor) owns its own tool loop and does not speak Spork's \
+     model wire protocol. Either connect it via the Orchestration MCP so your \
+     agent drives Spork, or point Spork at a local OpenAI-compatible HTTP \
+     endpoint (e.g. Ollama/LM Studio) so Spork drives a model.";
+
+/// [`map_agent_error`], but **fails loud with guidance** when the configured
+/// route is a CLI agent driven as a model and the failure is anything other than
+/// a (self-explanatory) privacy refusal. This is the daemon-side realization of
+/// the deprecated `cli` arm "failing loud" (REALIGNMENT_PLAN.md §2, R1): a
+/// *conforming* program still succeeds and never reaches here; only a misuse
+/// (wiring a real coding CLI as a model) hits it and gets steered to the two
+/// real connectivity arrows. Purely additive — the frozen `Transport`/
+/// `ProviderAdapter`/`CLI_PROVIDER_KEY` seams are untouched.
+pub(crate) fn map_agent_error_for(
+    err: spork_agent::AgentError,
+    config: &AgentConfig,
+) -> DaemonError {
+    let cli_as_model = config.cli_command.is_some() && config.local_endpoint.is_none();
+    let is_privacy = matches!(
+        &err,
+        spork_agent::AgentError::Provider(ProviderError::PrivacyViolation { .. })
+    );
+    let base = map_agent_error(err);
+    if cli_as_model && !is_privacy {
+        if let DaemonError::Agent(msg) = base {
+            return DaemonError::Agent(format!("{msg}\n\n{CLI_AS_MODEL_GUIDANCE}"));
+        }
+    }
+    base
+}
+
 /// Parse a node's privacy class from its `snake_case` token (the IPC string).
 ///
 /// Empty/`"any"` → [`PrivacyClass::Any`]; an unrecognized non-empty token is
 /// **refused** (fail-closed) rather than silently treated as permissive.
-fn parse_privacy(s: &str) -> Result<PrivacyClass, DaemonError> {
+pub(crate) fn parse_privacy(s: &str) -> Result<PrivacyClass, DaemonError> {
     match s {
         "" | "any" => Ok(PrivacyClass::Any),
         "local_only" => Ok(PrivacyClass::LocalOnly),

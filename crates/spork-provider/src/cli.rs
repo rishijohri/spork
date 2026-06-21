@@ -47,8 +47,15 @@ impl Default for CliAdapter {
 }
 
 impl CliAdapter {
-    /// The model/agent key used when none is specified.
-    pub const DEFAULT_MODEL: &'static str = "copilot-cli";
+    /// The neutral model/agent key used when none is specified.
+    ///
+    /// Deliberately **not** a real coding-CLI binary name (the old fictional
+    /// `copilot-cli` default was the source of the "No such file or directory"
+    /// bug): the generic-CLI-as-model route is deprecated (REALIGNMENT_PLAN.md
+    /// §2), so this names only a *conforming* program that speaks Spork's JSONL
+    /// wire protocol — never `claude`/`copilot`/`cursor`, which own their own
+    /// tool loop and should drive Spork over the Orchestration MCP instead.
+    pub const DEFAULT_MODEL: &'static str = "cli-agent";
 
     /// Create an adapter for the default CLI agent.
     #[must_use]

@@ -19,9 +19,9 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use crate::{
-    CapabilityRegistry, Locality, ModelRouter, ModelSelector, PrivacyClass, ProviderError,
-    ResolvedModel, SelectorMode, ANTHROPIC_PROVIDER_KEY, CLI_PROVIDER_KEY, LOCAL_PROVIDER_KEY,
-    OPENAI_PROVIDER_KEY,
+    CapabilityRegistry, CliAdapter, Locality, ModelRouter, ModelSelector, PrivacyClass,
+    ProviderError, ResolvedModel, SelectorMode, ANTHROPIC_PROVIDER_KEY, CLI_PROVIDER_KEY,
+    LOCAL_PROVIDER_KEY, OPENAI_PROVIDER_KEY,
 };
 
 /// How long a tripped provider's breaker stays **open** before it is retried
@@ -104,7 +104,12 @@ impl MultiProviderRouter {
                     "openrouter/auto",
                 ),
                 ProviderBinding::new(LOCAL_PROVIDER_KEY, Locality::Local, "llama3.1"),
-                ProviderBinding::new(CLI_PROVIDER_KEY, Locality::Local, "copilot-cli"),
+                // The CLI binding is kept so a `cli/<command>` selector still
+                // resolves (the frozen seam stays, append-only), but it no longer
+                // advertises the fictional `copilot-cli` model — the
+                // generic-CLI-as-model route is deprecated (REALIGNMENT_PLAN.md
+                // §2). Its default model is the neutral conforming-program key.
+                ProviderBinding::new(CLI_PROVIDER_KEY, Locality::Local, CliAdapter::DEFAULT_MODEL),
             ],
             default_provider: ANTHROPIC_PROVIDER_KEY.to_string(),
             capabilities: CapabilityRegistry::with_builtin_hints(),

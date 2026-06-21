@@ -19,6 +19,7 @@
     "@monaco-editor/react": "^4.7.0",
     "@tanstack/react-query": "^5.62.7",
     "@tauri-apps/api": "^2.1.1",
+    "@tauri-apps/plugin-dialog": "^2.7.1",
     "@xyflow/react": "^12.3.6",
     "elkjs": "^0.9.3",
     "react": "^18.3.1",
