@@ -39,6 +39,7 @@ mod adapter;
 mod anthropic;
 mod capability;
 mod error;
+mod openai;
 mod privacy;
 mod projection;
 mod router;
@@ -48,6 +49,7 @@ pub use adapter::ProviderAdapter;
 pub use anthropic::AnthropicAdapter;
 pub use capability::{CapSource, CapabilitySet, ToolCalling};
 pub use error::ProviderError;
+pub use openai::OpenAiAdapter;
 pub use privacy::{Locality, PrivacyClass};
 pub use projection::{LossyProjection, Projected, ProviderProjection};
 pub use router::{
@@ -66,3 +68,11 @@ pub use transcript::{
 /// mapping, the projection drop test, and the router all agree on one spelling
 /// (DESIGN.md §12.3).
 pub const ANTHROPIC_PROVIDER_KEY: &str = "anthropic";
+
+/// The provider key for the OpenAI-compatible adapter ([`OpenAiAdapter`]).
+///
+/// The stable string under which OpenAI-owned [`OpaqueProviderBlock`]s (e.g.
+/// reasoning) are tagged; the multi-provider router (P6) keys this adapter under
+/// it. One OpenAI-compatible wire shape serves OpenAI, OpenRouter, vLLM, and
+/// most local servers — they differ by endpoint/locality, not wire format.
+pub const OPENAI_PROVIDER_KEY: &str = "openai";
