@@ -1,0 +1,14 @@
+[package]
+name = "spork-cost"
+version = "0.1.0"
+edition = "2021"
+description = "Spork P6 cache-aware cost accounting: maps provider token usage to the canonical CostRecord (micro-USD, integer/canon-safe) with cache-read/write economics, attributed per originating node (DESIGN §5.4, §12.5)."
+
+[dependencies]
+# CostRecord is the canonical per-node cost the envelope carries; spork-cost
+# produces exactly that type so the daemon can record it without a conversion.
+spork-graph = { path = "../spork-graph" }
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

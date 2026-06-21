@@ -993,6 +993,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "spork-cost"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "spork-graph",
+]
+
+[[package]]
 name = "spork-daemon"
 version = "0.1.0"
 dependencies = [

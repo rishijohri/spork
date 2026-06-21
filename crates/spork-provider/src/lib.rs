@@ -38,22 +38,29 @@
 mod adapter;
 mod anthropic;
 mod capability;
+mod cli;
 mod error;
+mod multi_router;
 mod openai;
 mod privacy;
 mod projection;
+mod registry;
 mod router;
 mod transcript;
 
 pub use adapter::ProviderAdapter;
 pub use anthropic::AnthropicAdapter;
 pub use capability::{CapSource, CapabilitySet, ToolCalling};
+pub use cli::CliAdapter;
 pub use error::ProviderError;
+pub use multi_router::{MultiProviderRouter, ProviderBinding, AGGREGATOR_PROVIDER_KEY};
 pub use openai::OpenAiAdapter;
 pub use privacy::{Locality, PrivacyClass};
 pub use projection::{LossyProjection, Projected, ProviderProjection};
+pub use registry::{CapabilityProbe, CapabilityRegistry};
 pub use router::{
-    ModelRouter, ModelSelector, ResolvedModel, SingleProviderRouter, MODEL_SELECTOR_SCHEMA_VERSION,
+    ModelRouter, ModelSelector, ResolvedModel, SelectorMode, SelectorPolicy, SingleProviderRouter,
+    MODEL_SELECTOR_SCHEMA_VERSION,
 };
 pub use transcript::{
     CanonicalTranscript, CanonicalTurn, ContentBlock, OpaqueProviderBlock, Role,
@@ -76,3 +83,19 @@ pub const ANTHROPIC_PROVIDER_KEY: &str = "anthropic";
 /// it. One OpenAI-compatible wire shape serves OpenAI, OpenRouter, vLLM, and
 /// most local servers — they differ by endpoint/locality, not wire format.
 pub const OPENAI_PROVIDER_KEY: &str = "openai";
+
+/// The provider key for a **local** OpenAI-compatible server (Ollama / LM Studio
+/// / vLLM), served by [`OpenAiAdapter::local`].
+///
+/// The local provider reuses the OpenAI-compatible wire shape; it is a distinct
+/// key only so the router can bind it to [`Locality::Local`] for the privacy
+/// check (a `LocalOnly` node resolves here, never to cloud — DESIGN.md §12.3,
+/// §12.5).
+pub const LOCAL_PROVIDER_KEY: &str = "local";
+
+/// The provider key for the agent-CLI adapter ([`CliAdapter`]).
+///
+/// A CLI agent (e.g. Copilot CLI) is driven over a JSONL transcript rather than
+/// HTTP; it runs locally, so the router binds it to [`Locality::Local`]
+/// (DESIGN.md §12.1, §12.6).
+pub const CLI_PROVIDER_KEY: &str = "cli";

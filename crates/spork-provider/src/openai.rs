@@ -108,6 +108,25 @@ impl OpenAiAdapter {
         self
     }
 
+    /// Create an adapter for a **local** OpenAI-compatible server (Ollama's
+    /// OpenAI-compat endpoint, LM Studio, vLLM) serving `model_key`.
+    ///
+    /// One OpenAI-compatible wire shape serves cloud and local alike, so the
+    /// local provider reuses this mapping; it differs only in
+    /// [`Locality`](crate::Locality) (decided by the router, which keys it under
+    /// [`LOCAL_PROVIDER_KEY`](crate::LOCAL_PROVIDER_KEY)) and in defaulting to
+    /// **no native tool-calling** — local models commonly lack it, so
+    /// [`describe`](OpenAiAdapter::describe) reports
+    /// [`ToolCalling::JsonEmulated`](crate::ToolCalling::JsonEmulated) and the
+    /// router engages the JSON-in-prompt fallback (DESIGN.md §12.3, §12.4).
+    #[must_use]
+    pub fn local(model_key: impl Into<String>) -> Self {
+        OpenAiAdapter {
+            model_key: model_key.into(),
+            native_tools: false,
+        }
+    }
+
     /// The model key this adapter renders for.
     #[must_use]
     pub fn model_key(&self) -> &str {

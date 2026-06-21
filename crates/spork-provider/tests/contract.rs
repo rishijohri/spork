@@ -437,11 +437,25 @@ fn transcript_serde_round_trips() {
 
 #[test]
 fn model_selector_serde_round_trips_and_is_versioned() {
+    // P6 widened the selector to v2 (pinned | policy | inheritFromParent).
     let sel = ModelSelector::pinned("claude-x");
     let json = serde_json::to_value(&sel).unwrap();
-    assert_eq!(json["schema_version"], json!(1));
+    assert_eq!(json["schema_version"], json!(2));
+    // A pinned selector serializes byte-identically to the v1 shape: no `mode`
+    // key (skip_serializing_if), so the widening is a no-domino addition.
+    assert!(json.get("mode").is_none(), "pinned selector omits `mode`");
     let back: ModelSelector = serde_json::from_value(json).unwrap();
     assert_eq!(sel, back);
+}
+
+#[test]
+fn v1_shaped_selector_migrates_forward_to_pinned() {
+    // A stored v1 selector (no `mode` field) reads as Pinned — the forward
+    // migration the schema-version bump promised (CLAUDE.md C5).
+    let v1 = json!({ "schema_version": 1, "model_key": "claude-x" });
+    let sel: ModelSelector = serde_json::from_value(v1).unwrap();
+    assert_eq!(sel.model_key, "claude-x");
+    assert!(sel.mode.is_pinned());
 }
 
 #[test]

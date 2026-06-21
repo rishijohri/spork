@@ -18,21 +18,68 @@ use crate::{
     ANTHROPIC_PROVIDER_KEY,
 };
 
-/// The frozen schema version of [`ModelSelector`] (CLAUDE.md C5).
-pub const MODEL_SELECTOR_SCHEMA_VERSION: u16 = 1;
+/// The schema version of [`ModelSelector`] (CLAUDE.md C5).
+///
+/// Bumped to `2` in P6 when the selector widened from a bare `model_key` to the
+/// `pinned | policy | inheritFromParent` form (DESIGN.md §12.3). The widening is
+/// additive: the new [`ModelSelector::mode`] field carries `#[serde(default)]`
+/// (an absent `mode` reads as [`SelectorMode::Pinned`]), so a stored v1 selector
+/// migrates forward on read with no rewrite — the no-domino seam the F4 contract
+/// reserved.
+pub const MODEL_SELECTOR_SCHEMA_VERSION: u16 = 2;
+
+/// How a node's [`ModelSelector`] chooses a model (DESIGN.md §12.3).
+///
+/// `Pinned` is the F4 behavior (use `model_key`). `Policy` lets the router pick
+/// the first reachable, privacy-permitted model from an ordered preference list.
+/// `InheritFromParent` defers to the parent node's resolved model — the daemon
+/// substitutes the parent's concrete selector before calling
+/// [`ModelRouter::resolve`]; absent a parent it falls back to the router default.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SelectorMode {
+    /// Use the selector's `model_key` directly (the F4 behavior, the default).
+    #[default]
+    Pinned,
+    /// Pick the first reachable, privacy-permitted model from a preference list.
+    Policy(SelectorPolicy),
+    /// Defer to the parent node's resolved model.
+    InheritFromParent,
+}
+
+impl SelectorMode {
+    /// Whether this is the default [`SelectorMode::Pinned`] (lets a pinned
+    /// selector serialize byte-identically to a v1 one via `skip_serializing_if`).
+    #[must_use]
+    pub fn is_pinned(&self) -> bool {
+        matches!(self, SelectorMode::Pinned)
+    }
+}
+
+/// An ordered model-key preference list for [`SelectorMode::Policy`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SelectorPolicy {
+    /// Model keys in descending preference; the router picks the first that is
+    /// reachable (provider registered, breaker closed) and permitted by privacy.
+    pub prefer: Vec<String>,
+}
 
 /// A node's declarative request for a model.
 ///
-/// In v1 a selector is a `model_key` (which provider+model the node wants). In
-/// P6 this widens additively to the full `pinned | policy | inheritFromParent`
-/// form of DESIGN.md §12.3; the schema version is the no-domino seam that lets
-/// that happen without reinterpreting a stored v1 selector.
+/// A `model_key` (which provider+model the node wants) plus a [`SelectorMode`]
+/// (P6 widening). An empty `model_key` means "the router's default". The mode is
+/// `#[serde(default)]` and omitted from the wire when `Pinned`, so a pinned
+/// selector serializes exactly as the F4 v1 form did (no-domino, CLAUDE.md C5).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelSelector {
     /// The schema version of this selector shape.
     pub schema_version: u16,
     /// The requested model key. An empty key means "the router's default".
     pub model_key: String,
+    /// How the model is chosen (P6). Absent on the wire (and on stored v1
+    /// selectors) means [`SelectorMode::Pinned`].
+    #[serde(default, skip_serializing_if = "SelectorMode::is_pinned")]
+    pub mode: SelectorMode,
 }
 
 impl ModelSelector {
@@ -42,6 +89,7 @@ impl ModelSelector {
         ModelSelector {
             schema_version: MODEL_SELECTOR_SCHEMA_VERSION,
             model_key: model_key.into(),
+            mode: SelectorMode::Pinned,
         }
     }
 
@@ -51,6 +99,30 @@ impl ModelSelector {
         ModelSelector {
             schema_version: MODEL_SELECTOR_SCHEMA_VERSION,
             model_key: String::new(),
+            mode: SelectorMode::Pinned,
+        }
+    }
+
+    /// A policy selector: pick the first reachable, privacy-permitted model from
+    /// `prefer` (DESIGN.md §12.3).
+    #[must_use]
+    pub fn policy(prefer: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        ModelSelector {
+            schema_version: MODEL_SELECTOR_SCHEMA_VERSION,
+            model_key: String::new(),
+            mode: SelectorMode::Policy(SelectorPolicy {
+                prefer: prefer.into_iter().map(Into::into).collect(),
+            }),
+        }
+    }
+
+    /// An inherit-from-parent selector (DESIGN.md §12.3).
+    #[must_use]
+    pub fn inherit() -> Self {
+        ModelSelector {
+            schema_version: MODEL_SELECTOR_SCHEMA_VERSION,
+            model_key: String::new(),
+            mode: SelectorMode::InheritFromParent,
         }
     }
 }
