@@ -433,6 +433,16 @@ Branches are first-class and **never auto-merged** — silent code merges produc
 
 New node types register through the same `NodeTypeRegistry` the built-ins use — a declarative `NodeTypeDescriptor` (type id, display name, legend color, payload JSON schema, allowed edge types, optional sandboxed runner, staleness rule) validated at registration. This keeps the engine closed to modification but open to extension, makes types serializable and shareable, and lets the legend and node-details panel be fully data-driven, satisfying the requirement to ship built-ins out of the box while letting users define their own.
 
+### 6.6 Automatic branching & work attachment (non-destructive by construction)
+
+Branching is not a manual chore the user must remember — it is the **default outcome of starting work**, so an existing line of work can never be silently overwritten (the D1+D3 bet). The policy is **daemon-owned** (so it is identical whether work originates from the GUI, the headless client, an agent run, or drift capture; the renderer holds no graph authority, §15.1) and is decided when a new node is appended:
+
+- **Fork on divergence.** Starting code-changing work from the **current branch tip** *continues* that branch (the new Edit/Snapshot is its child on the same `branchId`). Starting work from any **non-tip node** — an earlier point that already has a child, or a historical node you checked out and edited — **auto-forks a new branch** (a fresh ref + the new node on it), because a second child of an existing node is, by definition, a divergence. This guarantees non-destructive exploration with the fewest possible branches; the explicit `branch.fork` (§6.3, A.1) remains as the manual override for forking on purpose.
+- **Read-only work attaches, it does not branch.** An agent task that produces no code change — *analysis* or *planning* — is an **observing/context node** (it owns no snapshot, §4.2), so there is no code "line" to fork. It attaches to the node it was asked about via a non-lineage edge (`DERIVED_FROM` for context, `VALIDATES`/`CHECKS`/`STRESSES` for observations) and stays on the current line. Only snapshot-owning (mutating) work participates in the fork-on-divergence rule above.
+- **Lineage vs. attachment is visually explicit.** Lineage edges (`PARENT_CHILD`, `BRANCH`, `MERGE_PARENT`) render **solid**; attachment/observation edges (`DERIVED_FROM`, `VALIDATES`/`CHECKS`/`STRESSES`) render **dotted** — so it is immediately clear which branch a node *belongs to* versus which node it merely *refers to* (UI_UX §6.2).
+
+The triggers that exercise this policy arrive with their phases: the **agent-run path** (click a node → ask the agent → analyze/plan/change) is P6; **checking out a historical node** to edit it is P7. Drift capture (F3) already records out-of-band human edits as Snapshot nodes; applying the fork-on-divergence policy in the drift-reconcile + agent-run paths is additive engine work behind the frozen `create_node` seam (the `branch_id` is caller-supplied today; auto-assignment is a new policy, not a contract change — see plan §9).
+
 
 ## 7. Node Type System
 
