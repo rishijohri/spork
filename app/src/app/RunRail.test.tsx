@@ -1,77 +1,80 @@
-// Run-rail test (DESIGN.md §14.2, §14.4) — ephemeral frames stream in for the
-// selected node without blocking the ordered path.
+// Run-rail test (UI_UX_DESIGN.md §5.9, §7.5) — the v1 rail is the Activity
+// stream; the "Run output" tab is a disabled forward-map placeholder.
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { render, screen, act } from "@testing-library/react";
+import { render, screen, act, fireEvent } from "@testing-library/react";
 import { RunRail } from "./RunRail";
 import { useUiStore } from "../state/store";
-
-const NODE = "00000000000000000000000001";
 
 describe("RunRail", () => {
   beforeEach(() => {
     useUiStore.getState().reset();
   });
 
-  it("streams ephemeral frames for the selected node into the rail", () => {
-    useUiStore.getState().selectNode(NODE);
+  it("shows the empty state when there is no activity", () => {
+    render(<RunRail />);
+    expect(screen.getByText("No activity yet.")).toBeInTheDocument();
+    expect(screen.queryByTestId("activity-log")).not.toBeInTheDocument();
+  });
+
+  it("renders a success activity entry inside the activity log", () => {
     render(<RunRail />);
 
     act(() => {
-      useUiStore
-        .getState()
-        .ingestEphemeral({ nodeId: NODE, channel: "RUN_STDOUT", data: "running…\n" });
-      useUiStore
-        .getState()
-        .ingestEphemeral({ nodeId: NODE, channel: "RUN_STDOUT", data: "ok\n" });
+      useUiStore.getState().logActivity("success", "Committed X");
     });
 
-    const log = screen.getByTestId("runrail-log");
-    expect(log.textContent).toBe("running…\nok\n");
+    const log = screen.getByTestId("activity-log");
+    const entries = screen.getAllByTestId("activity-entry");
+    expect(entries).toHaveLength(1);
+
+    const entry = entries[0]!;
+    expect(log).toContainElement(entry);
+    expect(entry).toHaveAttribute("data-level", "success");
+    expect(entry.textContent).toContain("Committed X");
+
+    // The empty state is gone once there is activity.
+    expect(screen.queryByText("No activity yet.")).not.toBeInTheDocument();
   });
 
-  it("shows nothing for an unselected node", () => {
+  it("renders an error-level activity entry distinctly", () => {
     render(<RunRail />);
+
     act(() => {
-      useUiStore
-        .getState()
-        .ingestEphemeral({ nodeId: NODE, channel: "RUN_STDOUT", data: "x\n" });
+      useUiStore.getState().logActivity("error", "Push failed: denied");
     });
-    const log = screen.getByTestId("runrail-log");
-    expect(log.textContent).toBe("");
+
+    const entry = screen.getByTestId("activity-entry");
+    expect(entry).toHaveAttribute("data-level", "error");
+    expect(entry.textContent).toContain("Push failed: denied");
   });
 
-  it("shows an empty state for the activity log when there is no activity", () => {
+  it("clears the activity log via the Clear control", () => {
     render(<RunRail />);
+
+    act(() => {
+      useUiStore.getState().logActivity("info", "Started run");
+      useUiStore.getState().logActivity("success", "Run passed");
+    });
+    expect(screen.getAllByTestId("activity-entry")).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear activity" }));
+
+    expect(screen.queryByTestId("activity-entry")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("activity-log")).not.toBeInTheDocument();
     expect(screen.getByText("No activity yet.")).toBeInTheDocument();
   });
 
-  it("renders activity entries, with an error entry styled distinctly", () => {
+  it("shows the Run output tab as present but disabled", () => {
     render(<RunRail />);
 
-    act(() => {
-      useUiStore.getState().logActivity("success", "Committed node → branch");
-      useUiStore.getState().logActivity("error", "Push to GitHub failed: denied");
-    });
+    const tab = screen.getByRole("tab", { name: "Run output" });
+    expect(tab).toBeInTheDocument();
+    expect(tab).toBeDisabled();
+    expect(tab).toHaveAttribute("aria-selected", "false");
 
-    // The log is an accessible log region.
-    const region = screen.getByRole("log", { name: "Activity log" });
-    expect(region).toBeInTheDocument();
-
-    // Both entries render, newest last.
-    const entries = screen.getAllByTestId("activity-entry");
-    expect(entries).toHaveLength(2);
-    expect(entries[0]?.textContent).toContain("Committed node → branch");
-    expect(entries[1]?.textContent).toContain("Push to GitHub failed: denied");
-
-    // The error entry carries its distinct level marker + style class.
-    expect(entries[1]).toHaveAttribute("data-level", "error");
-    expect(entries[1]?.className).toContain("spork-activity-error");
-    // The success entry is styled distinctly from the error one.
-    expect(entries[0]).toHaveAttribute("data-level", "success");
-    expect(entries[0]?.className).toContain("spork-activity-success");
-
-    // The empty-state line is gone once there is activity.
-    expect(screen.queryByText("No activity yet.")).not.toBeInTheDocument();
+    // The Activity tab is the active one.
+    const activityTab = screen.getByRole("tab", { name: "Activity" });
+    expect(activityTab).toHaveAttribute("aria-selected", "true");
   });
 });

@@ -33,8 +33,14 @@ export interface NodeTypeDescriptor {
   label: string;
   /** Card accent color (CSS color string). */
   color: string;
-  /** A short icon glyph rendered on the card (resolved from the icon name). */
+  /** A short icon glyph (legacy fallback; the SVG icon set uses `iconName`). */
   icon: string;
+  /**
+   * The icon NAME from `ui_contributions.icon` (e.g. "pencil"), resolved by the
+   * SVG icon set (src/ui/icons.tsx). This is the schema-driven icon identity; an
+   * unknown name falls back to the neutral circle icon.
+   */
+  iconName: string;
   /** The node family this kind belongs to (drives some toolbar gating). */
   family: Family;
 }
@@ -114,6 +120,7 @@ function fallbackDescriptor(kind: string): NodeTypeDescriptor {
     label: kind,
     color: "#9ca3af",
     icon: "○",
+    iconName: "circle",
     family: "context",
   };
 }
@@ -148,6 +155,7 @@ export function descriptorFromUiContributions(
     label,
     color,
     icon: iconGlyph(iconName),
+    iconName: iconName ?? base.iconName,
     family: family ?? base.family,
   };
 }

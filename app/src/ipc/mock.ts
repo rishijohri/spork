@@ -101,9 +101,19 @@ let state: MockState = freshState();
 function defaultReplyFor(cmd: Command): CommandResult {
   switch (cmd.command) {
     case "NODE_DIFF":
-      return { result: "DIFF", changedPaths: [] };
+      // In browser-mock mode, demo nodes get a plausible changed-path set so the
+      // Changes tab shows something; tests (autoEmit off) keep the empty default.
+      return {
+        result: "DIFF",
+        changedPaths: state.autoEmit ? demoChangedPaths() : [],
+      };
     case "BLOB_READ":
-      return { result: "BLOB", bytes: [] };
+      // Browser mock: return demo file content that VARIES by tree hash, so a
+      // parent-tree-vs-node-tree diff renders a real before/after. Tests get [].
+      return {
+        result: "BLOB",
+        bytes: state.autoEmit ? demoBlobBytes(cmd.treeHash, cmd.path) : [],
+      };
     case "GC_RUN":
       return { result: "GC", reclaimable: [], bytes: 0 };
     case "GIT_EXPORT":
@@ -388,7 +398,7 @@ function demoNode(
     status,
     isStale: false,
     ownsSnapshot,
-    snapshotHash: ownsSnapshot ? `b3:${id.slice(0, 8)}` : null,
+    snapshotHash: ownsSnapshot ? `b3:${id}` : null,
     branchId: "main",
     parentIds,
     model,
@@ -442,6 +452,25 @@ export function demoGraphView(): GraphView {
     { name: "main", kind: "Branch" as const, target: DEMO_EDIT },
   ];
   return { schemaVersion: 1, nodes, edges, refs };
+}
+
+/** A plausible changed-path set for any demo node (browser-mock mode). */
+function demoChangedPaths(): string[] {
+  return ["src/auth/login.ts", "src/auth/index.ts", "docs/README.md"];
+}
+
+/**
+ * Demo file content for a `BLOB_READ`, varied by tree hash so the Changes tab's
+ * parent-tree-vs-node-tree comparison renders a real before/after diff. The
+ * `EDIT` tree adds a guard the `ROOT` tree lacks. Browser-mock mode only.
+ */
+function demoBlobBytes(treeHash: string, path: string): number[] {
+  const guarded = treeHash.includes("EDIT") || treeHash.includes("SNAP");
+  const body = guarded
+    ? "  if (!value) throw new Error('empty');\n  return normalize(value);"
+    : "  return normalize(value);";
+  const text = `// ${path}\nexport function check(value: string) {\n${body}\n}\n`;
+  return Array.from(new TextEncoder().encode(text));
 }
 
 /**

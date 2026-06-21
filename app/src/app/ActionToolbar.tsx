@@ -1,88 +1,135 @@
-// The shared action toolbar (DESIGN.md §14.2, §14.5).
+// The node-action toolbar (UI_UX_DESIGN.md §5.1, §7.1).
 //
-// Renders the frozen `TOOLBAR_ACTIONS` set as buttons, each enabled/disabled per
-// the current selection via `enabledWhen(node)`, and each WIRED to dispatch its
-// `Command` via `runToolbarAction` with optimistic UI. Both the top bar and the
-// node-details panel render this component, so the gating and the dispatch path
-// are defined in exactly one place (DESIGN.md §14.5 — schema-driven gating).
-//
-// Optimistic UI (DESIGN.md §14.4): on click the action dispatches and the
-// returned `opId` is registered as a pending op (`beginOptimistic`); the button
-// shows the in-flight state until the op-log stream's reconciling event lands and
-// the store clears it. The resulting graph state arrives ONLY over the op-log
-// stream — never the dispatch return value.
+// A SINGLE instance, in the top bar, gated by the selected node (§14.2/§14.5) —
+// no more duplicate copy in the details panel. Most actions open a modal (so a
+// name / remote / confirm is collected); the modal dispatches via the shared
+// action runner. Run-check opens a small Validate/Stress/Sanity submenu that
+// dispatches directly (with optimistic UI + an activity line).
 
-import { useCallback, useState } from "react";
+import { useRef, useState, type JSX } from "react";
 import { useUiStore } from "../state/store";
-import { TOOLBAR_ACTIONS, runToolbarAction, type ToolbarAction } from "./toolbar";
+import { TOOLBAR_ACTIONS, CHECK_KINDS, type ToolbarAction } from "./toolbar";
+import { useActions } from "./useActions";
+import { Button } from "../ui/Button";
+import { Icon } from "../ui/icons";
 import type { NodeView } from "../ipc/types";
 
 export interface ActionToolbarProps {
-  /** The current selection the actions gate + dispatch against (null = none). */
+  /** The current selection the actions gate + act on (null = none). */
   node: NodeView | null;
-  /** An aria-label distinguishing the top-bar vs. the node-panel instance. */
-  ariaLabel: string;
-  /**
-   * Optional per-action side effect run after the action settles (e.g. the
-   * node-details panel switches its tab to "diff" when View is clicked). Local
-   * UI only — the daemon path is unchanged.
-   */
-  onActionDone?: (action: ToolbarAction) => void;
+  ariaLabel?: string;
 }
 
-/** The wired action toolbar shared by the top bar and the node-details panel. */
+/** The single node-action toolbar. */
 export function ActionToolbar({
   node,
-  ariaLabel,
-  onActionDone,
+  ariaLabel = "Node actions",
 }: ActionToolbarProps): JSX.Element {
-  const defaultModel = useUiStore((s) => s.defaultModel);
-  const beginOptimistic = useUiStore((s) => s.beginOptimistic);
-  const logActivity = useUiStore((s) => s.logActivity);
-  // The set of action ids with an in-flight dispatch, so the button reflects the
-  // optimistic state until its op-log event reconciles.
-  const [inFlight, setInFlight] = useState<ReadonlySet<string>>(new Set());
+  const openModal = useUiStore((s) => s.openModal);
+  const { run } = useActions();
+  const [checkMenu, setCheckMenu] = useState(false);
+  const checkBtnRef = useRef<HTMLDivElement>(null);
 
-  const onAction = useCallback(
-    async (action: ToolbarAction): Promise<void> => {
-      setInFlight((s) => new Set(s).add(action.id));
-      try {
-        // `runToolbarAction` never throws (it catches + logs errors itself), so
-        // the activity log captures every outcome and the UI never crashes.
-        await runToolbarAction(
-          action,
-          node,
-          { defaultModel },
-          { beginOptimistic, logActivity },
-        );
-        onActionDone?.(action);
-      } finally {
-        setInFlight((s) => {
-          const next = new Set(s);
-          next.delete(action.id);
-          return next;
-        });
-      }
-    },
-    [node, defaultModel, beginOptimistic, logActivity, onActionDone],
-  );
+  if (!node) {
+    return (
+      <div className="spork-toolbar" role="toolbar" aria-label={ariaLabel}>
+        <span className="spork-toolbar-empty">Select a node to act on it</span>
+      </div>
+    );
+  }
+
+  function trigger(action: ToolbarAction): void {
+    if (!node) return;
+    switch (action.id) {
+      case "restore":
+        openModal({ kind: "restore", nodeId: node.id });
+        break;
+      case "newBranch":
+        openModal({ kind: "newBranch", nodeId: node.id });
+        break;
+      case "merge":
+        openModal({ kind: "merge", nodeId: node.id });
+        break;
+      case "commit":
+        openModal({ kind: "commit", nodeId: node.id });
+        break;
+      case "push":
+        openModal({ kind: "push", nodeId: node.id });
+        break;
+      case "runCheck":
+        setCheckMenu((v) => !v);
+        break;
+    }
+  }
+
+  async function runCheck(kind: string): Promise<void> {
+    setCheckMenu(false);
+    if (!node) return;
+    await run(
+      { command: "NODE_RUN_CHECK", targetNodeId: node.id, spec: { kind } },
+      { nodeId: node.id, label: `${kind} check` },
+    );
+  }
 
   return (
     <div className="spork-toolbar" role="toolbar" aria-label={ariaLabel}>
       {TOOLBAR_ACTIONS.map((a) => {
         const enabled = a.enabledWhen(node);
-        const busy = inFlight.has(a.id);
+        if (a.id === "runCheck") {
+          return (
+            <div
+              key={a.id}
+              ref={checkBtnRef}
+              style={{ position: "relative", display: "inline-flex" }}
+            >
+              <Button
+                variant={a.variant ?? "secondary"}
+                size="sm"
+                icon={a.icon}
+                disabled={!enabled}
+                data-action={a.id}
+                aria-haspopup="menu"
+                aria-expanded={checkMenu}
+                onClick={() => trigger(a)}
+              >
+                {a.label}
+                <Icon name="chevron-down" size={12} />
+              </Button>
+              {checkMenu && enabled && (
+                <div
+                  className="spork-ctxmenu"
+                  role="menu"
+                  style={{ position: "absolute", top: "100%", left: 0, marginTop: 4 }}
+                >
+                  {CHECK_KINDS.map((c) => (
+                    <button
+                      key={c.kind}
+                      className="spork-ctx-item"
+                      role="menuitem"
+                      data-check={c.kind}
+                      onClick={() => void runCheck(c.kind)}
+                    >
+                      <Icon name="play" size={13} />
+                      {c.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        }
         return (
-          <button
+          <Button
             key={a.id}
-            disabled={!enabled || busy}
+            variant={a.variant ?? "secondary"}
+            size="sm"
+            icon={a.icon}
+            disabled={!enabled}
             data-action={a.id}
-            data-busy={busy ? "true" : undefined}
-            aria-disabled={!enabled || busy}
-            onClick={() => void onAction(a)}
+            onClick={() => trigger(a)}
           >
             {a.label}
-          </button>
+          </Button>
         );
       })}
     </div>

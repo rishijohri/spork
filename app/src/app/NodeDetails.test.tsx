@@ -1,12 +1,14 @@
-// Node-Details tests (DESIGN.md §14.5) — selection render, lazy diff fetch via
-// the mocked dispatch, and per-kind toolbar enablement.
+// Node-Details tests (DESIGN.md §14.5) — empty state, selection header, the
+// Changes/Info tabs (no Conversation/Results), Info-tab fields, and the real
+// lazy diff fetch via the mocked NODE_DIFF dispatch.
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { NodeDetails } from "./NodeDetails";
 import { useUiStore } from "../state/store";
-import { setDispatchReply, getDispatchedCommands } from "../ipc/mock";
+import { setDispatchReply } from "../ipc/mock";
+import { shortId } from "../ui/format";
 import type { GraphView } from "../ipc/types";
 
 const EDIT = "00000000000000000000000001";
@@ -26,7 +28,7 @@ function view(): GraphView {
         snapshotHash: "b3:aa",
         branchId: "main",
         parentIds: [],
-        model: "gpt-4o",
+        model: "openai/gpt-4o",
       },
       {
         id: CHECK,
@@ -36,7 +38,7 @@ function view(): GraphView {
         isStale: false,
         ownsSnapshot: false,
         snapshotHash: null,
-        branchId: "main",
+        branchId: "feature-x",
         parentIds: [EDIT],
         model: null,
       },
@@ -66,64 +68,79 @@ describe("NodeDetails", () => {
   it("prompts to select a node when nothing is selected", () => {
     renderDetails();
     expect(
-      screen.getByText(/select a node to see its details/i),
+      screen.getByText(/select a node to inspect it/i),
     ).toBeInTheDocument();
   });
 
-  it("renders the selected node's descriptor + id", () => {
+  it("renders the selected node's descriptor label, short id, and the two tabs", () => {
     useUiStore.getState().selectNode(EDIT);
     renderDetails();
+
+    // Descriptor label for "codebase-edit" is "Edit".
     expect(screen.getByText("Edit")).toBeInTheDocument();
-    expect(screen.getByText(EDIT)).toBeInTheDocument();
+    // Short id (entropy tail) is shown, not the raw 26-char ULID.
+    expect(screen.getByText(shortId(EDIT))).toBeInTheDocument();
+    expect(screen.queryByText(EDIT)).toBeNull();
+
+    // Exactly two tabs: Changes + Info.
+    expect(screen.getByRole("tab", { name: "Changes" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Info" })).toBeInTheDocument();
+    expect(screen.getAllByRole("tab")).toHaveLength(2);
+
+    // No forward-mapped tabs are faked.
+    expect(screen.queryByRole("tab", { name: /conversation/i })).toBeNull();
+    expect(screen.queryByRole("tab", { name: /results/i })).toBeNull();
   });
 
-  it("enables Validate/Restore on a snapshot-owning mutating node", () => {
-    useUiStore.getState().selectNode(EDIT);
-    renderDetails();
-    const validate = screen.getAllByRole("button", { name: "Validate" })[0];
-    const restore = screen.getAllByRole("button", {
-      name: "Restore",
-    })[0];
-    expect(validate).toBeEnabled();
-    expect(restore).toBeEnabled();
-  });
-
-  it("disables Validate/Restore on an observing node without a snapshot", () => {
+  it("shows Branch, Model, and Parents in the Info tab", () => {
     useUiStore.getState().selectNode(CHECK);
     renderDetails();
-    const validate = screen.getAllByRole("button", { name: "Validate" })[0];
-    const restore = screen.getAllByRole("button", {
-      name: "Restore",
-    })[0];
-    expect(validate).toBeDisabled();
-    expect(restore).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Info" }));
+
+    // Branch value rendered verbatim from branchId.
+    expect(screen.getByText("Branch")).toBeInTheDocument();
+    expect(screen.getByText("feature-x")).toBeInTheDocument();
+
+    // Parents section: this node's parent is EDIT, surfaced as a short-id link.
+    expect(screen.getByText("Parents")).toBeInTheDocument();
+    const parentLink = screen.getByRole("button", { name: shortId(EDIT) });
+    expect(parentLink).toBeInTheDocument();
+
+    // Clicking the parent link re-selects the parent node.
+    fireEvent.click(parentLink);
+    expect(useUiStore.getState().selectedNodeId).toBe(EDIT);
   });
 
-  it("the diff tab requests changed paths and a blob via the mocked dispatch", async () => {
+  it("shows the humanized model on a node that carries one", () => {
+    useUiStore.getState().selectNode(EDIT);
+    renderDetails();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Info" }));
+
+    expect(screen.getByText("Model")).toBeInTheDocument();
+    // humanizeModel drops the provider prefix.
+    expect(screen.getByText("gpt-4o")).toBeInTheDocument();
+  });
+
+  it("Changes tab renders the changed-path buttons from NODE_DIFF", async () => {
     setDispatchReply("NODE_DIFF", {
       result: "DIFF",
-      changedPaths: ["src/lib.rs"],
-    });
-    setDispatchReply("BLOB_READ", {
-      result: "BLOB",
-      bytes: Array.from(new TextEncoder().encode("fn main() {}")),
+      changedPaths: ["a.ts", "b.ts"],
     });
 
     useUiStore.getState().selectNode(EDIT);
     renderDetails();
 
-    fireEvent.click(screen.getByRole("tab", { name: "diff" }));
+    // Changes is the default tab; the diff arrives via the mocked dispatch.
+    const list = await screen.findByLabelText("Changed paths");
+    expect(within(list).getByText("a.ts")).toBeInTheDocument();
+    expect(within(list).getByText("b.ts")).toBeInTheDocument();
 
-    // The changed-path list arrives from the NODE_DIFF dispatch.
-    const pathBtn = await screen.findByRole("button", { name: "src/lib.rs" });
-    expect(pathBtn).toBeInTheDocument();
-
-    // Opening the file fires a BLOB_READ dispatch.
-    fireEvent.click(pathBtn);
+    // Both are clickable file buttons carrying their data-path.
     await waitFor(() => {
-      const tags = getDispatchedCommands().map((c) => c.command);
-      expect(tags).toContain("NODE_DIFF");
-      expect(tags).toContain("BLOB_READ");
+      expect(document.querySelector('[data-path="a.ts"]')).not.toBeNull();
+      expect(document.querySelector('[data-path="b.ts"]')).not.toBeNull();
     });
   });
 });

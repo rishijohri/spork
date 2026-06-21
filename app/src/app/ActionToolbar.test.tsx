@@ -1,26 +1,18 @@
-// Action-toolbar wiring tests (DESIGN.md §14.2, §14.4, §14.5).
+// Action-toolbar wiring tests (UI_UX_DESIGN.md §5.1, §5.10, §7.1).
 //
-// Covers the three load-bearing behaviors the F3-UI bar must have:
-//   1. enable/disable per node kind (the schema-driven gating, §14.5),
-//   2. a click dispatches the action's frozen Command (the single mutation
-//      path, A.1), and
-//   3. the dispatch registers an optimistic op by its returned opId, which the
-//      op-log stream then reconciles (§14.4).
+// The single node-action toolbar gates its actions on the selected node
+// (§14.2/§14.5) and routes most of them through a modal (so a name / remote /
+// confirm is collected) — only Run-check dispatches directly via a submenu.
+// These tests pin that contract: empty-state, per-kind enablement, the
+// modal-open side effect, and the run-check → NODE_RUN_CHECK dispatch.
 //
 // Tauri is mocked (src/test/setup.ts → src/ipc/mock.ts); no daemon, no display.
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { ActionToolbar } from "./ActionToolbar";
-import { TOOLBAR_ACTIONS, runToolbarAction } from "./toolbar";
 import { useUiStore } from "../state/store";
-import {
-  getDispatchedCommands,
-  setDispatchReply,
-  setDispatchError,
-  fakeUlid,
-} from "../ipc/mock";
-import type { ActivityLevel } from "../state/store";
+import { getDispatchedCommands } from "../ipc/mock";
 import type { NodeView } from "../ipc/types";
 
 const EDIT_ID = "00000000000000000000000001";
@@ -56,315 +48,150 @@ function checkNode(): NodeView {
   };
 }
 
+/** All action buttons keyed by their data-action attribute. */
+function actionButtons(): HTMLButtonElement[] {
+  return Array.from(
+    document.querySelectorAll<HTMLButtonElement>("button[data-action]"),
+  );
+}
+
+function actionButton(action: string): HTMLButtonElement {
+  const btn = document.querySelector<HTMLButtonElement>(
+    `button[data-action="${action}"]`,
+  );
+  if (!btn) throw new Error(`no button for data-action="${action}"`);
+  return btn;
+}
+
+describe("ActionToolbar empty state", () => {
+  beforeEach(() => {
+    useUiStore.getState().reset();
+  });
+
+  it("renders the empty prompt and no action buttons with no selection", () => {
+    render(<ActionToolbar node={null} ariaLabel="Actions" />);
+    expect(screen.getByText("Select a node to act on it")).toBeInTheDocument();
+    expect(actionButtons()).toHaveLength(0);
+  });
+});
+
 describe("ActionToolbar enablement (per node kind)", () => {
   beforeEach(() => {
     useUiStore.getState().reset();
   });
 
-  it("disables every selection-gated action when nothing is selected", () => {
-    render(<ActionToolbar node={null} ariaLabel="Actions" />);
-    // With no selection, all the gated actions are disabled (there is no
-    // always-on action in the Spork toolbar — every action needs a node).
-    expect(screen.getByRole("button", { name: "View" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Validate" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Restore" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "New Branch" })).toBeDisabled();
-    expect(
-      screen.getByRole("button", { name: "Commit to GitHub" }),
-    ).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Push to GitHub" })).toBeDisabled();
-  });
-
-  it("New Branch requires a selection (disabled with none, enabled with one)", () => {
-    const { rerender } = render(
-      <ActionToolbar node={null} ariaLabel="Actions" />,
-    );
-    expect(screen.getByRole("button", { name: "New Branch" })).toBeDisabled();
-    rerender(<ActionToolbar node={editNode()} ariaLabel="Actions" />);
-    expect(screen.getByRole("button", { name: "New Branch" })).toBeEnabled();
-  });
-
-  it("enables Validate + Restore + GitHub actions on a snapshot-owning mutating node", () => {
+  it("enables every action on a snapshot-owning mutating node", () => {
     render(<ActionToolbar node={editNode()} ariaLabel="Actions" />);
-    expect(screen.getByRole("button", { name: "Validate" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Restore" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Commit to GitHub" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Push to GitHub" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "View" })).toBeEnabled();
+    for (const action of [
+      "restore",
+      "runCheck",
+      "newBranch",
+      "merge",
+      "commit",
+      "push",
+    ]) {
+      expect(actionButton(action)).toBeEnabled();
+    }
+    // Visible labels match the documented contract.
+    expect(actionButton("restore")).toHaveTextContent("Restore");
+    expect(actionButton("runCheck")).toHaveTextContent("Run check");
+    expect(actionButton("newBranch")).toHaveTextContent("Branch");
+    expect(actionButton("merge")).toHaveTextContent("Merge");
+    expect(actionButton("commit")).toHaveTextContent("Commit");
+    expect(actionButton("push")).toHaveTextContent("Push");
   });
 
   it("disables snapshot-only actions on an observing node without a snapshot", () => {
     render(<ActionToolbar node={checkNode()} ariaLabel="Actions" />);
-    expect(screen.getByRole("button", { name: "Validate" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Restore" })).toBeDisabled();
-    expect(
-      screen.getByRole("button", { name: "Commit to GitHub" }),
-    ).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Push to GitHub" })).toBeDisabled();
-    // ...but a generic selection action (View) and New Branch are still on.
-    expect(screen.getByRole("button", { name: "View" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "New Branch" })).toBeEnabled();
+    // Snapshot-gated (isMaterializable / mutating) actions are off.
+    expect(actionButton("restore")).toBeDisabled();
+    expect(actionButton("runCheck")).toBeDisabled();
+    expect(actionButton("commit")).toBeDisabled();
+    expect(actionButton("push")).toBeDisabled();
+    // Selection-only actions stay on.
+    expect(actionButton("newBranch")).toBeEnabled();
+    expect(actionButton("merge")).toBeEnabled();
   });
 });
 
-describe("ActionToolbar dispatch (wired actions)", () => {
+describe("ActionToolbar modal-opening actions", () => {
   beforeEach(() => {
     useUiStore.getState().reset();
   });
 
-  it("Validate dispatches a NODE_RUN_CHECK against the selected node", async () => {
+  it("clicking Restore opens the restore modal for the node (no direct dispatch)", () => {
     render(<ActionToolbar node={editNode()} ariaLabel="Actions" />);
-    fireEvent.click(screen.getByRole("button", { name: "Validate" }));
-    // Wait for the in-flight dispatch to settle (button re-enables).
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Validate" })).toBeEnabled(),
-    );
+    expect(useUiStore.getState().modal).toBeNull();
+
+    fireEvent.click(actionButton("restore"));
+
+    expect(useUiStore.getState().modal).toEqual({
+      kind: "restore",
+      nodeId: EDIT_ID,
+    });
+    // The toolbar itself dispatches nothing — the modal confirms+dispatches.
+    expect(getDispatchedCommands()).toHaveLength(0);
+  });
+
+  it("Branch / Merge / Commit / Push each open their own modal", () => {
+    const cases: { action: string; kind: string }[] = [
+      { action: "newBranch", kind: "newBranch" },
+      { action: "merge", kind: "merge" },
+      { action: "commit", kind: "commit" },
+      { action: "push", kind: "push" },
+    ];
+    for (const { action, kind } of cases) {
+      useUiStore.getState().reset();
+      const { unmount } = render(
+        <ActionToolbar node={editNode()} ariaLabel="Actions" />,
+      );
+      fireEvent.click(actionButton(action));
+      expect(useUiStore.getState().modal).toEqual({ kind, nodeId: EDIT_ID });
+      expect(getDispatchedCommands()).toHaveLength(0);
+      unmount();
+    }
+  });
+});
+
+describe("ActionToolbar run-check submenu", () => {
+  beforeEach(() => {
+    useUiStore.getState().reset();
+  });
+
+  it("opens a check menu and dispatches NODE_RUN_CHECK for the chosen kind", async () => {
+    render(<ActionToolbar node={editNode()} ariaLabel="Actions" />);
+
+    // The menu is hidden until the run-check button is clicked.
+    expect(
+      document.querySelector('[data-check="validation"]'),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(actionButton("runCheck"));
+
+    const validateItem = await screen.findByRole("menuitem", {
+      name: /Validate/,
+    });
+    expect(validateItem).toHaveAttribute("data-check", "validation");
+    // All three check kinds are offered.
+    const menu = validateItem.closest('[role="menu"]') as HTMLElement;
+    expect(within(menu).getByText("Stress")).toBeInTheDocument();
+    expect(within(menu).getByText("Sanity")).toBeInTheDocument();
+
+    fireEvent.click(validateItem);
+
+    await waitFor(() => {
+      const cmd = getDispatchedCommands().find(
+        (c) => c.command === "NODE_RUN_CHECK",
+      );
+      expect(cmd).toBeDefined();
+    });
     const cmd = getDispatchedCommands().find(
       (c) => c.command === "NODE_RUN_CHECK",
     );
     expect(cmd).toBeDefined();
     if (cmd && cmd.command === "NODE_RUN_CHECK") {
       expect(cmd.targetNodeId).toBe(EDIT_ID);
+      expect(cmd.spec).toEqual({ kind: "validation" });
     }
-  });
-
-  it("Restore dispatches a NODE_RESTORE for the selected node", async () => {
-    render(<ActionToolbar node={editNode()} ariaLabel="Actions" />);
-    fireEvent.click(screen.getByRole("button", { name: "Restore" }));
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Restore" })).toBeEnabled(),
-    );
-    const cmd = getDispatchedCommands().find(
-      (c) => c.command === "NODE_RESTORE",
-    );
-    expect(cmd).toBeDefined();
-    if (cmd && cmd.command === "NODE_RESTORE") {
-      expect(cmd.nodeId).toBe(EDIT_ID);
-    }
-  });
-
-  it("New Branch dispatches a BRANCH_FORK off the selected node", async () => {
-    render(<ActionToolbar node={editNode()} ariaLabel="Actions" />);
-    fireEvent.click(screen.getByRole("button", { name: "New Branch" }));
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "New Branch" })).toBeEnabled(),
-    );
-    const cmd = getDispatchedCommands().find(
-      (c) => c.command === "BRANCH_FORK",
-    );
-    expect(cmd).toBeDefined();
-    if (cmd && cmd.command === "BRANCH_FORK") {
-      expect(cmd.fromNodeId).toBe(EDIT_ID);
-      expect(cmd.name).toBe(`branch/${EDIT_ID}`);
-    }
-  });
-
-  it("Commit to GitHub dispatches GIT_EXPORT on a snapshot-owning node", async () => {
-    setDispatchReply("GIT_EXPORT", {
-      result: "GIT",
-      branch: `spork/${EDIT_ID}`,
-      commitSha: "0".repeat(40),
-      pushed: false,
-    });
-    render(<ActionToolbar node={editNode()} ariaLabel="Actions" />);
-    fireEvent.click(screen.getByRole("button", { name: "Commit to GitHub" }));
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Commit to GitHub" }),
-      ).toBeEnabled(),
-    );
-    const cmd = getDispatchedCommands().find((c) => c.command === "GIT_EXPORT");
-    expect(cmd).toBeDefined();
-    if (cmd && cmd.command === "GIT_EXPORT") {
-      expect(cmd.nodeId).toBe(EDIT_ID);
-      expect(cmd.branch).toBeNull();
-    }
-    // A git action is action-shaped (no opId), so it registers no optimistic op.
-    expect(Object.keys(useUiStore.getState().pending)).toHaveLength(0);
-  });
-
-  it("Push to GitHub dispatches GIT_PUSH on a snapshot-owning node", async () => {
-    setDispatchReply("GIT_PUSH", {
-      result: "GIT",
-      branch: `spork/${EDIT_ID}`,
-      commitSha: "0".repeat(40),
-      pushed: true,
-    });
-    render(<ActionToolbar node={editNode()} ariaLabel="Actions" />);
-    fireEvent.click(screen.getByRole("button", { name: "Push to GitHub" }));
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Push to GitHub" }),
-      ).toBeEnabled(),
-    );
-    const cmd = getDispatchedCommands().find((c) => c.command === "GIT_PUSH");
-    expect(cmd).toBeDefined();
-    if (cmd && cmd.command === "GIT_PUSH") {
-      expect(cmd.nodeId).toBe(EDIT_ID);
-      expect(cmd.remote).toBeNull();
-    }
-  });
-
-  it("a read-only action (View) dispatches nothing to the daemon", async () => {
-    render(<ActionToolbar node={editNode()} ariaLabel="Actions" />);
-    fireEvent.click(screen.getByRole("button", { name: "View" }));
-    // The button settles back to enabled (no in-flight dispatch) and nothing
-    // reached the daemon.
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "View" })).toBeEnabled(),
-    );
-    expect(getDispatchedCommands()).toHaveLength(0);
-  });
-
-  it("a dispatched mutation registers an optimistic op by its returned opId", async () => {
-    const OP = fakeUlid();
-    setDispatchReply("NODE_RUN_CHECK", { result: "MUTATION", opId: OP, ids: {} });
-
-    render(<ActionToolbar node={editNode()} ariaLabel="Actions" />);
-    fireEvent.click(screen.getByRole("button", { name: "Validate" }));
-
-    await waitFor(() => {
-      expect(useUiStore.getState().pending[OP]).toBeDefined();
-      expect(useUiStore.getState().pending[OP]?.label).toBe("Validate");
-    });
-    // Let the in-flight button state settle.
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Validate" })).toBeEnabled(),
-    );
-  });
-});
-
-describe("runToolbarAction (unit)", () => {
-  beforeEach(() => {
-    useUiStore.getState().reset();
-  });
-
-  it("returns the built command + opId and begins an optimistic op", async () => {
-    const OP = fakeUlid();
-    setDispatchReply("NODE_RESTORE", { result: "MUTATION", opId: OP, ids: {} });
-    const restore = TOOLBAR_ACTIONS.find((a) => a.id === "restore")!;
-
-    const begun: string[] = [];
-    const outcome = await runToolbarAction(
-      restore,
-      editNode(),
-      { defaultModel: "claude-sonnet-4-6" },
-      { beginOptimistic: (opId) => begun.push(opId) },
-    );
-
-    expect(outcome.command).toEqual({
-      command: "NODE_RESTORE",
-      nodeId: EDIT_ID,
-    });
-    expect(outcome.opId).toBe(OP);
-    expect(begun).toEqual([OP]);
-  });
-
-  it("returns {opId:null} for an action-shaped git command (no optimistic op)", async () => {
-    setDispatchReply("GIT_EXPORT", {
-      result: "GIT",
-      branch: `spork/${EDIT_ID}`,
-      commitSha: "0".repeat(40),
-      pushed: false,
-    });
-    const gitExport = TOOLBAR_ACTIONS.find((a) => a.id === "gitExport")!;
-
-    const begun: string[] = [];
-    const outcome = await runToolbarAction(
-      gitExport,
-      editNode(),
-      { defaultModel: "claude-sonnet-4-6" },
-      { beginOptimistic: (opId) => begun.push(opId) },
-    );
-
-    // The command was dispatched but a non-MUTATION reply carries no opId.
-    expect(outcome.command).toEqual({
-      command: "GIT_EXPORT",
-      nodeId: EDIT_ID,
-      branch: null,
-    });
-    expect(outcome.opId).toBeNull();
-    expect(begun).toEqual([]);
-  });
-
-  it("is a daemon no-op for a local-only action (no command, no opId)", async () => {
-    const view = TOOLBAR_ACTIONS.find((a) => a.id === "view")!;
-    const outcome = await runToolbarAction(
-      view,
-      editNode(),
-      { defaultModel: "claude-sonnet-4-6" },
-      { beginOptimistic: () => {} },
-    );
-    expect(outcome).toEqual({ command: null, opId: null });
-    expect(getDispatchedCommands()).toHaveLength(0);
-  });
-
-  it("appends a success activity line after a git action settles", async () => {
-    setDispatchReply("GIT_EXPORT", {
-      result: "GIT",
-      branch: `spork/${EDIT_ID}`,
-      commitSha: "abcdef0123456789".padEnd(40, "0"),
-      pushed: false,
-    });
-    const gitExport = TOOLBAR_ACTIONS.find((a) => a.id === "gitExport")!;
-
-    const logged: { level: ActivityLevel; text: string }[] = [];
-    await runToolbarAction(
-      gitExport,
-      editNode(),
-      { defaultModel: "claude-sonnet-4-6" },
-      {
-        beginOptimistic: () => {},
-        logActivity: (level, text) => logged.push({ level, text }),
-      },
-    );
-
-    expect(logged).toHaveLength(1);
-    expect(logged[0]?.level).toBe("success");
-    expect(logged[0]?.text).toContain("Committed");
-    expect(logged[0]?.text).toContain(`spork/${EDIT_ID}`);
-    // The commit SHA is truncated to its first 8 chars.
-    expect(logged[0]?.text).toContain("abcdef01");
-  });
-
-  it("appends an ERROR activity line when dispatch rejects and does NOT throw", async () => {
-    // Model the NetConnect-gated Push: the dispatch rejects until granted. The
-    // user must SEE the failure, and runToolbarAction must not throw.
-    setDispatchError("GIT_PUSH", new Error("capability denied: NetConnect"));
-    const gitPush = TOOLBAR_ACTIONS.find((a) => a.id === "gitPush")!;
-
-    const logged: { level: ActivityLevel; text: string }[] = [];
-    // The promise resolves (does not reject) — runToolbarAction swallows the error.
-    const outcome = await runToolbarAction(
-      gitPush,
-      editNode(),
-      { defaultModel: "claude-sonnet-4-6" },
-      {
-        beginOptimistic: () => {},
-        logActivity: (level, text) => logged.push({ level, text }),
-      },
-    );
-
-    expect(outcome.opId).toBeNull();
-    expect(logged).toHaveLength(1);
-    expect(logged[0]?.level).toBe("error");
-    expect(logged[0]?.text).toContain("capability denied: NetConnect");
-  });
-
-  it("logs an info line for a read-only action (View)", async () => {
-    const view = TOOLBAR_ACTIONS.find((a) => a.id === "view")!;
-    const logged: { level: ActivityLevel; text: string }[] = [];
-    await runToolbarAction(
-      view,
-      editNode(),
-      { defaultModel: "claude-sonnet-4-6" },
-      {
-        beginOptimistic: () => {},
-        logActivity: (level, text) => logged.push({ level, text }),
-      },
-    );
-    expect(logged).toHaveLength(1);
-    expect(logged[0]?.level).toBe("info");
-    expect(logged[0]?.text).toContain("Viewing");
   });
 });

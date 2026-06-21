@@ -60,6 +60,38 @@ export interface ActivityEntry {
 /** How many activity entries the bounded log retains (oldest dropped first). */
 export const ACTIVITY_LOG_LIMIT = 100;
 
+/** Daemon connection state, shown by the top-bar dot + status sub-strip (§5.12). */
+export type ConnectionState =
+  | "connected"
+  | "reconnecting"
+  | "disconnected"
+  | "mock";
+
+/** Layout density (Settings → §5.13). */
+export type DensityMode = "comfortable" | "compact";
+
+/**
+ * The modal currently open, if any (UI_UX_DESIGN.md §5.10/§5.13). A discriminated
+ * union so any component can request a modal and the Shell renders exactly one.
+ * Every variant maps to a BUILT (🟢) command or local action — no forward-map
+ * surface appears here.
+ */
+export type AppModal =
+  | { kind: "newBranch"; nodeId: Ulid }
+  | { kind: "merge"; nodeId: Ulid }
+  | { kind: "restore"; nodeId: Ulid }
+  | { kind: "commit"; nodeId: Ulid }
+  | { kind: "push"; nodeId: Ulid }
+  | { kind: "gc" }
+  | { kind: "settings" }
+  /** A denied capability surfaced honestly (§5.10e); inline grant is forward-map. */
+  | { kind: "capability"; capability: string; action: string };
+
+/** An open context menu anchored at a screen point (§5.11). */
+export type ContextMenu =
+  | { kind: "node"; nodeId: Ulid; x: number; y: number }
+  | { kind: "branch"; ref: string; target: Ulid; x: number; y: number };
+
 export interface UiState {
   /** The live, reduced view-model. */
   view: GraphView;
@@ -79,6 +111,33 @@ export interface UiState {
   activity: ActivityEntry[];
   /** The highest op-log `seq` folded so far (gap detection). */
   lastSeq: number;
+
+  // --- chrome / layout UI state (UI_UX_DESIGN.md §4, §12) ---
+  /** Daemon connection state for the status dot / sub-strip + banner. */
+  connection: ConnectionState;
+  /** Left navigator collapsed to a thin rail. */
+  navCollapsed: boolean;
+  /** Right details panel collapsed. */
+  detailsCollapsed: boolean;
+  /** Bottom rail collapsed to its tab bar. */
+  railCollapsed: boolean;
+  /** Layout density (applies `data-density` on the document element). */
+  density: DensityMode;
+  /**
+   * Node-type filter: the set of kinds to HIGHLIGHT. Empty = no filter (all
+   * normal). When non-empty, non-matching nodes dim on the canvas (§5.2/§7.2).
+   */
+  kindFilter: string[];
+  /** Canvas free-text search query; non-matching nodes dim (§5.4/§7.3). */
+  canvasSearch: string;
+  /** The currently open modal, or null. */
+  modal: AppModal | null;
+  /** Whether the ⌘K command palette is open. */
+  paletteOpen: boolean;
+  /** The open context menu, or null. */
+  contextMenu: ContextMenu | null;
+  /** Whether the settings popover is open. */
+  settingsOpen: boolean;
 
   // --- actions ---
   /** Replace the whole view-model (e.g. after a `graph_view` fetch). */
@@ -104,6 +163,34 @@ export interface UiState {
    * The log is trimmed to `ACTIVITY_LOG_LIMIT` so it never grows without bound.
    */
   logActivity: (level: ActivityLevel, text: string) => void;
+  /** Set the daemon connection state. */
+  setConnection: (state: ConnectionState) => void;
+  /** Toggle the left navigator collapsed state. */
+  toggleNav: () => void;
+  /** Toggle the right details panel collapsed state. */
+  toggleDetails: () => void;
+  /** Set the bottom rail collapsed state. */
+  setRailCollapsed: (collapsed: boolean) => void;
+  /** Set layout density. */
+  setDensity: (density: DensityMode) => void;
+  /** Toggle a node `kind` in the highlight filter (empty = no filter). */
+  toggleKindFilter: (kind: string) => void;
+  /** Clear the node-type filter. */
+  clearKindFilter: () => void;
+  /** Set the canvas search query. */
+  setCanvasSearch: (q: string) => void;
+  /** Open a modal (replaces any open modal). */
+  openModal: (modal: AppModal) => void;
+  /** Close the open modal. */
+  closeModal: () => void;
+  /** Open/close the ⌘K command palette. */
+  setPaletteOpen: (open: boolean) => void;
+  /** Open a context menu (replaces any open one). */
+  openContextMenu: (menu: ContextMenu) => void;
+  /** Close the open context menu. */
+  closeContextMenu: () => void;
+  /** Open/close the settings popover. */
+  setSettingsOpen: (open: boolean) => void;
   /** Reset the store to its initial state (tests). */
   reset: () => void;
 }
@@ -140,6 +227,17 @@ const INITIAL = {
   rail: {} as RunRail,
   activity: [] as ActivityEntry[],
   lastSeq: 0,
+  connection: "connected" as ConnectionState,
+  navCollapsed: false,
+  detailsCollapsed: false,
+  railCollapsed: false,
+  density: "comfortable" as DensityMode,
+  kindFilter: [] as string[],
+  canvasSearch: "",
+  modal: null as AppModal | null,
+  paletteOpen: false,
+  contextMenu: null as ContextMenu | null,
+  settingsOpen: false,
 };
 
 /** A monotonic counter making each activity entry's React key unique. */
@@ -221,11 +319,47 @@ export const useUiStore = create<UiState>((set) => ({
       };
     }),
 
+  setConnection: (connection) => set({ connection }),
+
+  toggleNav: () => set((s) => ({ navCollapsed: !s.navCollapsed })),
+
+  toggleDetails: () => set((s) => ({ detailsCollapsed: !s.detailsCollapsed })),
+
+  setRailCollapsed: (railCollapsed) => set({ railCollapsed }),
+
+  setDensity: (density) => set({ density }),
+
+  toggleKindFilter: (kind) =>
+    set((s) => ({
+      kindFilter: s.kindFilter.includes(kind)
+        ? s.kindFilter.filter((k) => k !== kind)
+        : [...s.kindFilter, kind],
+    })),
+
+  clearKindFilter: () => set({ kindFilter: [] }),
+
+  setCanvasSearch: (canvasSearch) => set({ canvasSearch }),
+
+  openModal: (modal) => set({ modal, contextMenu: null, paletteOpen: false }),
+
+  closeModal: () => set({ modal: null }),
+
+  setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
+
+  openContextMenu: (contextMenu) => set({ contextMenu }),
+
+  closeContextMenu: () => set({ contextMenu: null }),
+
+  setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+
   reset: () =>
     set({
       ...INITIAL,
       pending: {},
       rail: {},
       activity: [],
+      kindFilter: [],
+      modal: null,
+      contextMenu: null,
     }),
 }));
