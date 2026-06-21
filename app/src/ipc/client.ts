@@ -73,6 +73,24 @@ export async function openProject(path: string): Promise<void> {
 }
 
 /**
+ * Open the OS **folder picker** and return the chosen directory, or `null` if
+ * cancelled (P7.5 MVP, W1). Uses the Tauri dialog plugin in the desktop app; in a
+ * plain browser / Vitest (no Tauri runtime) it returns `null` so the typed-path
+ * fallback is used instead of throwing. The plugin is imported lazily so the
+ * browser bundle never evaluates it.
+ */
+export async function pickProjectDir(): Promise<string | null> {
+  if (!TAURI) return null;
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const selected = await open({
+    directory: true,
+    multiple: false,
+    title: "Open a project folder",
+  });
+  return typeof selected === "string" ? selected : null;
+}
+
+/**
  * Dispatch one typed `Command` and return the parsed `CommandResult`.
  *
  * This is the single mutation/read path (DESIGN.md A.1): a mutation returns a
@@ -87,6 +105,44 @@ export async function dispatch(command: Command): Promise<CommandResult> {
 /** Fetch the denormalized view-model snapshot. Mirrors the `graph_view` command. */
 export async function graphView(): Promise<GraphView> {
   return invoke<GraphView>("graph_view");
+}
+
+/**
+ * The provider config the Settings form sends to `set_agent_config` (P7.5 MVP,
+ * W3). A friendly shape the Rust side maps to the daemon's `AgentConfig`; the
+ * endpoint/CLI command is config, not a secret (the renderer holds zero secrets,
+ * DESIGN.md §15.1).
+ */
+export interface AgentProviderConfig {
+  /** `"local"` (HTTP endpoint) or `"cli"` (subprocess agent). */
+  kind: "local" | "cli";
+  /** The local OpenAI-compatible endpoint URL (when `kind === "local"`). */
+  endpoint?: string;
+  /** The CLI agent program — a *conforming* JSONL agent (when `kind === "cli"`). */
+  command?: string;
+  /** The CLI agent args (when `kind === "cli"`). */
+  args?: string[];
+}
+
+/**
+ * Configure (and persist) which provider agent runs reach — a local HTTP
+ * endpoint or a CLI agent (P7.5 MVP, W3). Mirrors the `set_agent_config` command;
+ * the choice is persisted under `<project>/.spork/agent_config.json` and survives
+ * a restart.
+ */
+export async function setAgentConfig(config: AgentProviderConfig): Promise<void> {
+  await invoke<void>("set_agent_config", { config });
+}
+
+/**
+ * Hand a path off to the user's real editor (REALIGNMENT_PLAN §5d) — Spork is not
+ * a code editor. `editor` is an optional explicit launcher (`code`/`cursor`/…);
+ * absent, the Rust side probes for one and falls back to the OS opener. A no-op
+ * in browser mock mode (no Tauri runtime to spawn a process).
+ */
+export async function openInEditor(path: string, editor?: string): Promise<void> {
+  if (!TAURI) return;
+  await invoke<void>("open_in_editor", { path, editor: editor ?? null });
 }
 
 /** A handle that stops an event subscription when called. */

@@ -1,14 +1,20 @@
-// The node-action toolbar (UI_UX_DESIGN.md §5.1, §7.1).
+// The node-action toolbar (UI_UX_DESIGN.md §5.1, §7.1; REALIGNMENT_PLAN §5a).
 //
-// A SINGLE instance, in the top bar, gated by the selected node (§14.2/§14.5) —
-// no more duplicate copy in the details panel. Most actions open a modal (so a
-// name / remote / confirm is collected); the modal dispatches via the shared
-// action runner. Run-check opens a small Validate/Stress/Sanity submenu that
-// dispatches directly (with optimistic UI + an activity line).
+// A SINGLE instance, in the top bar, gated by the selected node (§14.2/§14.5).
+// Reframed for the timeline-first model: a primary "+ New node from here ▾" menu
+// (Agentic / Action groups) creates a node from the selection, and the two direct
+// node-ops (Restore, Merge into line) sit beside it. Branching is automatic —
+// there is no "new branch" verb. Agentic items open the Ask modal pre-set to
+// their intent; action checks dispatch directly; commit/push open their modals.
 
 import { useRef, useState, type JSX } from "react";
 import { useUiStore } from "../state/store";
-import { TOOLBAR_ACTIONS, CHECK_KINDS, type ToolbarAction } from "./toolbar";
+import {
+  NEW_NODE_GROUPS,
+  NODE_OPS,
+  type NewNodeItem,
+  type NodeOp,
+} from "./toolbar";
 import { useActions } from "./useActions";
 import { Button } from "../ui/Button";
 import { Icon } from "../ui/icons";
@@ -27,8 +33,8 @@ export function ActionToolbar({
 }: ActionToolbarProps): JSX.Element {
   const openModal = useUiStore((s) => s.openModal);
   const { run } = useActions();
-  const [checkMenu, setCheckMenu] = useState(false);
-  const checkBtnRef = useRef<HTMLDivElement>(null);
+  const [newMenu, setNewMenu] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   if (!node) {
     return (
@@ -38,100 +44,108 @@ export function ActionToolbar({
     );
   }
 
-  function trigger(action: ToolbarAction): void {
-    if (!node) return;
-    switch (action.id) {
-      case "restore":
-        openModal({ kind: "restore", nodeId: node.id });
+  const target = node;
+
+  async function dispatchNewNode(item: NewNodeItem): Promise<void> {
+    setNewMenu(false);
+    switch (item.dispatch.type) {
+      case "askAgent":
+        openModal({ kind: "askAgent", nodeId: target.id, intent: item.dispatch.intent });
         break;
-      case "newBranch":
-        openModal({ kind: "newBranch", nodeId: node.id });
+      case "check":
+        await run(
+          { command: "NODE_RUN_CHECK", targetNodeId: target.id, spec: { kind: item.dispatch.checkKind } },
+          { nodeId: target.id, label: `${item.dispatch.checkKind} check` },
+        );
         break;
-      case "merge":
-        openModal({ kind: "merge", nodeId: node.id });
-        break;
-      case "commit":
-        openModal({ kind: "commit", nodeId: node.id });
-        break;
-      case "push":
-        openModal({ kind: "push", nodeId: node.id });
-        break;
-      case "runCheck":
-        setCheckMenu((v) => !v);
+      case "modal":
+        openModal({ kind: item.dispatch.modal, nodeId: target.id });
         break;
     }
   }
 
-  async function runCheck(kind: string): Promise<void> {
-    setCheckMenu(false);
-    if (!node) return;
-    await run(
-      { command: "NODE_RUN_CHECK", targetNodeId: node.id, spec: { kind } },
-      { nodeId: node.id, label: `${kind} check` },
-    );
+  function triggerOp(op: NodeOp): void {
+    switch (op.id) {
+      case "restore":
+        openModal({ kind: "restore", nodeId: target.id });
+        break;
+      case "merge":
+        openModal({ kind: "merge", nodeId: target.id });
+        break;
+    }
   }
 
   return (
     <div className="spork-toolbar" role="toolbar" aria-label={ariaLabel}>
-      {TOOLBAR_ACTIONS.map((a) => {
-        const enabled = a.enabledWhen(node);
-        if (a.id === "runCheck") {
-          return (
+      <div ref={menuRef} style={{ position: "relative", display: "inline-flex" }}>
+        <Button
+          variant="primary"
+          size="sm"
+          icon="plus"
+          data-action="newNode"
+          aria-haspopup="menu"
+          aria-expanded={newMenu}
+          onClick={() => setNewMenu((v) => !v)}
+        >
+          New node
+          <Icon name="chevron-down" size={12} />
+        </Button>
+        {newMenu && (
+          <>
             <div
-              key={a.id}
-              ref={checkBtnRef}
-              style={{ position: "relative", display: "inline-flex" }}
+              onClick={() => setNewMenu(false)}
+              style={{ position: "fixed", inset: 0, zIndex: 30 }}
+              aria-hidden="true"
+            />
+            <div
+              className="spork-ctxmenu spork-newnode-menu"
+              role="menu"
+              aria-label="New node from here"
+              style={{ position: "absolute", top: "100%", left: 0, marginTop: 4, zIndex: 31 }}
             >
-              <Button
-                variant={a.variant ?? "secondary"}
-                size="sm"
-                icon={a.icon}
-                disabled={!enabled}
-                data-action={a.id}
-                aria-haspopup="menu"
-                aria-expanded={checkMenu}
-                onClick={() => trigger(a)}
-              >
-                {a.label}
-                <Icon name="chevron-down" size={12} />
-              </Button>
-              {checkMenu && enabled && (
-                <div
-                  className="spork-ctxmenu"
-                  role="menu"
-                  style={{ position: "absolute", top: "100%", left: 0, marginTop: 4 }}
-                >
-                  {CHECK_KINDS.map((c) => (
-                    <button
-                      key={c.kind}
-                      className="spork-ctx-item"
-                      role="menuitem"
-                      data-check={c.kind}
-                      onClick={() => void runCheck(c.kind)}
-                    >
-                      <Icon name="play" size={13} />
-                      {c.label}
-                    </button>
-                  ))}
+              <span className="spork-ctx-eyebrow">New node from here</span>
+              {NEW_NODE_GROUPS.map((group) => (
+                <div key={group.label} className="spork-newnode-group">
+                  <span className="spork-ctx-grouplabel">{group.label}</span>
+                  {group.items.map((item) => {
+                    const enabled = item.enabledWhen(target);
+                    return (
+                      <button
+                        key={item.id}
+                        className="spork-ctx-item spork-newnode-item"
+                        role="menuitem"
+                        data-newnode={item.id}
+                        disabled={!enabled}
+                        onClick={() => void dispatchNewNode(item)}
+                      >
+                        <Icon name={item.icon} size={14} />
+                        <span className="spork-newnode-text">
+                          <span className="spork-newnode-label">{item.label}</span>
+                          <span className="spork-newnode-help">{item.help}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
-              )}
+              ))}
             </div>
-          );
-        }
-        return (
-          <Button
-            key={a.id}
-            variant={a.variant ?? "secondary"}
-            size="sm"
-            icon={a.icon}
-            disabled={!enabled}
-            data-action={a.id}
-            onClick={() => trigger(a)}
-          >
-            {a.label}
-          </Button>
-        );
-      })}
+          </>
+        )}
+      </div>
+
+      {NODE_OPS.map((op) => (
+        <Button
+          key={op.id}
+          variant={op.variant ?? "secondary"}
+          size="sm"
+          icon={op.icon}
+          disabled={!op.enabledWhen(target)}
+          data-action={op.id}
+          onClick={() => triggerOp(op)}
+        >
+          {op.label}
+        </Button>
+      ))}
     </div>
   );
 }

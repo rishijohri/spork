@@ -11,7 +11,7 @@ import type { GraphView } from "./ipc/types";
 
 function oneNodeView(): GraphView {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     nodes: [
       {
         id: "01ROOT0000000000000000000A",
@@ -26,6 +26,9 @@ function oneNodeView(): GraphView {
         model: "claude-sonnet-4-6",
         cost: null,
         gate: null,
+        presentationStatus: null,
+        lineLabel: "main",
+        forkedFrom: null,
       },
     ],
     edges: [],

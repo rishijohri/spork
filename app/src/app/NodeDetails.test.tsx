@@ -16,7 +16,7 @@ const CHECK = "00000000000000000000000002";
 
 function view(): GraphView {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     nodes: [
       {
         id: EDIT,
@@ -31,6 +31,9 @@ function view(): GraphView {
         model: "openai/gpt-4o",
         cost: null,
         gate: null,
+        presentationStatus: null,
+        lineLabel: "main",
+        forkedFrom: null,
       },
       {
         id: CHECK,
@@ -45,6 +48,9 @@ function view(): GraphView {
         model: null,
         cost: null,
         gate: null,
+        presentationStatus: null,
+        lineLabel: "feature-x",
+        forkedFrom: null,
       },
     ],
     edges: [],
@@ -86,24 +92,38 @@ describe("NodeDetails", () => {
     expect(screen.getByText(shortId(EDIT))).toBeInTheDocument();
     expect(screen.queryByText(EDIT)).toBeNull();
 
-    // Exactly two tabs: Changes + Info.
+    // A mutating Edit node leads with Changes, then Thread (was Conversation,
+    // REALIGNMENT_PLAN §5c), then Info — family-driven.
     expect(screen.getByRole("tab", { name: "Changes" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Thread" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Info" })).toBeInTheDocument();
-    expect(screen.getAllByRole("tab")).toHaveLength(2);
-
-    // No forward-mapped tabs are faked.
-    expect(screen.queryByRole("tab", { name: /conversation/i })).toBeNull();
-    expect(screen.queryByRole("tab", { name: /results/i })).toBeNull();
+    expect(screen.getAllByRole("tab")).toHaveLength(3);
   });
 
-  it("shows Branch, Model, and Parents in the Info tab", () => {
+  it("renders the node's transcript in the Thread tab (P7.5 W5b)", async () => {
+    useUiStore.getState().selectNode(EDIT);
+    renderDetails();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Thread" }));
+
+    // The mock's get_node_transcript returns a sample assistant turn; it renders.
+    await waitFor(() => {
+      expect(
+        screen.getByText(/captures the project as the root snapshot/i),
+      ).toBeInTheDocument();
+    });
+    // The threaded follow-up composer is present.
+    expect(screen.getByLabelText(/Follow-up/i)).toBeInTheDocument();
+  });
+
+  it("shows Line, Model, and Parents in the Info tab", () => {
     useUiStore.getState().selectNode(CHECK);
     renderDetails();
 
     fireEvent.click(screen.getByRole("tab", { name: "Info" }));
 
-    // Branch value rendered verbatim from branchId.
-    expect(screen.getByText("Branch")).toBeInTheDocument();
+    // The line is shown by its friendly label (was a raw "Branch" — §5a/§5c).
+    expect(screen.getByText("Line")).toBeInTheDocument();
     expect(screen.getByText("feature-x")).toBeInTheDocument();
 
     // Parents section: this node's parent is EDIT, surfaced as a short-id link.

@@ -40,11 +40,22 @@ describe("descriptorFor", () => {
     expect(d.family).toBe("context");
   });
 
-  it("exposes the built-in node types in the legend (incl. P6 agent-context, P7 gate)", () => {
-    expect(allDescriptors()).toHaveLength(8);
+  it("exposes the built-in node types in the legend (incl. P6 agent-context, P7 gate, R2 agentic + action)", () => {
+    // The six P5 built-ins + agent-context (P6) + gate (P7) + the R2 offline
+    // mirrors of the agentic + deterministic-action kinds (REALIGNMENT_PLAN §3a).
+    expect(allDescriptors()).toHaveLength(17);
     expect(Object.keys(BUILTIN_DESCRIPTORS).sort()).toEqual(
       [
+        "action-git-commit",
+        "action-git-push",
+        "action-run-tests",
+        "action-sanity",
+        "action-stress",
+        "agent-ask",
         "agent-context",
+        "agent-explore",
+        "agent-plan",
+        "agent-work",
         "codebase-edit",
         "gate",
         "merge",

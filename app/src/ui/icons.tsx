@@ -41,6 +41,7 @@ export type IconName =
   | "maximize"
   | "corner-up-left"
   | "play"
+  | "folder"
   | "git-branch"
   | "git-commit"
   | "upload"
@@ -175,6 +176,9 @@ const ICONS: Record<IconName, JSX.Element> = {
     </>
   ),
   play: <polygon points="5 3 19 12 5 21 5 3" />,
+  folder: (
+    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+  ),
   "git-branch": (
     <>
       <line x1="6" y1="3" x2="6" y2="15" />

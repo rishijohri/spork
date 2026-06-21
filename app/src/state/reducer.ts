@@ -22,7 +22,7 @@ import type {
 
 /** An empty view-model, used as the reducer's seed. */
 export const EMPTY_VIEW: GraphView = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   nodes: [],
   edges: [],
   refs: [],
@@ -43,6 +43,10 @@ function placeholderNode(id: Ulid): NodeView {
     model: null,
     cost: null,
     gate: null,
+    // R2 additive view fields — a placeholder is on the default line, no state.
+    presentationStatus: null,
+    lineLabel: "main",
+    forkedFrom: null,
   };
 }
 

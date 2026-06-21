@@ -33,7 +33,7 @@ const OP = "0000000000000000000000000P";
 
 function seedView(): GraphView {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     nodes: [
       {
         id: ROOT,
@@ -48,6 +48,9 @@ function seedView(): GraphView {
         model: "gpt-4o",
         cost: null,
         gate: null,
+        presentationStatus: null,
+        lineLabel: "main",
+        forkedFrom: null,
       },
     ],
     edges: [],
@@ -93,25 +96,25 @@ describe("Shell end-to-end-ish flow (mocked Tauri)", () => {
       useUiStore.getState().selectNode(ROOT);
     });
 
-    // The toolbar renders ONCE now (top bar) — a single runCheck button. Open the
-    // Run-check dropdown, then pick Validate to dispatch NODE_RUN_CHECK.
-    const runCheckBtn = await waitFor(() => {
+    // The toolbar renders ONCE now (top bar). Open the "+ New node from here"
+    // menu, then pick the Action "Run tests" item to dispatch NODE_RUN_CHECK.
+    const newNodeBtn = await waitFor(() => {
       const btns = document.querySelectorAll<HTMLButtonElement>(
-        '[data-action="runCheck"]',
+        '[data-action="newNode"]',
       );
       expect(btns).toHaveLength(1);
       return btns[0]!;
     });
-    fireEvent.click(runCheckBtn);
+    fireEvent.click(newNodeBtn);
 
-    const validationItem = await waitFor(() => {
+    const runTestsItem = await waitFor(() => {
       const item = document.querySelector<HTMLButtonElement>(
-        '[data-check="validation"]',
+        '[data-newnode="run-tests"]',
       );
       expect(item).not.toBeNull();
       return item!;
     });
-    fireEvent.click(validationItem);
+    fireEvent.click(runTestsItem);
 
     // The frozen NODE_RUN_CHECK command reached the daemon, targeting the root,
     // and its returned opId is registered as an in-flight optimistic op (§14.4).

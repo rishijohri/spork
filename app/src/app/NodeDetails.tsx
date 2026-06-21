@@ -10,14 +10,25 @@
 // NODE_DIFF gives the changed-path set vs a baseline parent; each file's two
 // sides come from BLOB_READ of the parent tree and the node tree.
 
-import { lazy, Suspense, useMemo, useState, type JSX } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type JSX,
+} from "react";
 import { useUiStore } from "../state/store";
 import { useNodeDiff } from "../state/queries";
+import { useActions } from "./useActions";
 import { descriptorFor } from "../canvas/descriptors";
-import { dispatch } from "../ipc/client";
+import { dispatch, openInEditor } from "../ipc/client";
+import { lastProject } from "./onboarding";
+import { fetchTranscript, type TranscriptTurn } from "../ipc/transcript";
 import { Icon } from "../ui/icons";
-import { IconButton } from "../ui/Button";
-import { shortId, humanizeModel, formatMicroUsd, effectiveStatus } from "../ui/format";
+import { Button, IconButton } from "../ui/Button";
+import { shortId, humanizeModel, formatMicroUsd, statusBadge } from "../ui/format";
 import type { Command, NodeView } from "../ipc/types";
 
 const DiffEditor = lazy(async () => {
@@ -25,7 +36,34 @@ const DiffEditor = lazy(async () => {
   return { default: mod.DiffEditor };
 });
 
-type Tab = "changes" | "info";
+/**
+ * The Node-Details tabs, chosen by node **family** (REALIGNMENT_PLAN §5c):
+ * agentic/context nodes lead with their **Thread**; observing action/check nodes
+ * lead with their **Result** (the recorded outcome); all carry Changes + Info.
+ */
+type Tab = "changes" | "thread" | "result" | "info";
+
+/** The tab set for a node, family-driven (R2). */
+function tabsForNode(node: NodeView): Tab[] {
+  const agentic = node.kind.startsWith("agent-") || node.family === "context";
+  if (agentic) return ["thread", "changes", "info"];
+  if (node.family === "observing") return ["result", "changes", "info"];
+  return ["changes", "thread", "info"];
+}
+
+/** The human label for a tab. */
+function tabLabel(t: Tab): string {
+  switch (t) {
+    case "changes":
+      return "Changes";
+    case "thread":
+      return "Thread";
+    case "result":
+      return "Result";
+    case "info":
+      return "Info";
+  }
+}
 
 /** Guess a Monaco language id from a file extension. */
 function langFromPath(path: string): string {
@@ -54,10 +92,18 @@ export function NodeDetails(): JSX.Element {
   const view = useUiStore((s) => s.view);
   const selectNode = useUiStore((s) => s.selectNode);
   const openModal = useUiStore((s) => s.openModal);
+  const editorPref = useUiStore((s) => s.editorPref);
+  const logActivity = useUiStore((s) => s.logActivity);
   const [tab, setTab] = useState<Tab>("changes");
 
   const node: NodeView | null =
     (selectedId && view.nodes.find((n) => n.id === selectedId)) || null;
+
+  // Keep the active tab valid as the selection's family changes.
+  const tabs = node ? tabsForNode(node) : (["changes", "info"] as Tab[]);
+  useEffect(() => {
+    if (node && !tabs.includes(tab)) setTab(tabs[0]!);
+  }, [node, tab, tabs]);
 
   if (!node) {
     return (
@@ -71,13 +117,29 @@ export function NodeDetails(): JSX.Element {
   }
 
   const d = descriptorFor(node.kind);
-  const eff = effectiveStatus(node.status, node.isStale);
+  const badge = statusBadge(node);
 
   function copyId(): void {
     try {
       void navigator.clipboard?.writeText(node!.id);
     } catch {
       /* clipboard unavailable (e.g. jsdom) — ignore */
+    }
+  }
+
+  // "Open codebase" hands off to the user's real editor (REALIGNMENT_PLAN §5d).
+  // Spork is not a code editor; for now this opens the live project root.
+  async function openCodebase(): Promise<void> {
+    const path = lastProject();
+    if (!path) {
+      logActivity("error", "No project path to open — open a project first.");
+      return;
+    }
+    try {
+      await openInEditor(path, editorPref || undefined);
+      logActivity("success", `Opened ${path} in your editor`);
+    } catch (err) {
+      logActivity("error", `Open in editor failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -94,23 +156,28 @@ export function NodeDetails(): JSX.Element {
         </button>
         <div style={{ flex: 1 }} />
         <IconButton
+          icon="folder"
+          label="Open codebase in your editor"
+          onClick={() => void openCodebase()}
+        />
+        <IconButton
           icon="messages-square"
           label="Ask the agent about this node"
           onClick={() => openModal({ kind: "askAgent", nodeId: node.id })}
         />
         <span
           className="spork-status"
-          data-status={eff.status}
-          data-stale={eff.stale ? "true" : undefined}
+          data-status={badge.tone}
+          data-stale={badge.stale ? "true" : undefined}
         >
           <span className="spork-status-dot" aria-hidden="true" />
-          {eff.label}
-          {eff.stale && <span className="spork-stale-tag"> · stale</span>}
+          {badge.label}
+          {badge.stale && <span className="spork-stale-tag"> · stale</span>}
         </span>
       </header>
 
       <nav className="spork-tabs" role="tablist" aria-label="Node detail tabs">
-        {(["changes", "info"] as const).map((t) => (
+        {tabs.map((t) => (
           <button
             key={t}
             className="spork-tab"
@@ -118,7 +185,7 @@ export function NodeDetails(): JSX.Element {
             aria-selected={tab === t}
             onClick={() => setTab(t)}
           >
-            {t === "changes" ? "Changes" : "Info"}
+            {tabLabel(t)}
           </button>
         ))}
       </nav>
@@ -126,11 +193,133 @@ export function NodeDetails(): JSX.Element {
       <div className="spork-details-body" role="tabpanel">
         {tab === "changes" ? (
           <ChangesTab node={node} view={view} />
+        ) : tab === "thread" ? (
+          <ThreadTab node={node} />
+        ) : tab === "result" ? (
+          <ResultTab node={node} />
         ) : (
           <InfoTab node={node} onSelectParent={selectNode} />
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * Thread tab (REALIGNMENT_PLAN §5c, was "Conversation") — the agentic node's
+ * stored transcript via the read-only History MCP (`get_node_transcript`), plus a
+ * threaded **read-only** follow-up that attaches a new Agent context node to this
+ * one (DESIGN §13.4, §13.7). For the full conversational surface use the hero
+ * chat; this is the per-node ancestry view.
+ */
+function ThreadTab({ node }: { node: NodeView }): JSX.Element {
+  const { run } = useActions();
+  const [turns, setTurns] = useState<TranscriptTurn[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [followUp, setFollowUp] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setTurns(await fetchTranscript(node.id));
+    setLoading(false);
+  }, [node.id]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function send(): Promise<void> {
+    if (!followUp.trim()) return;
+    setBusy(true);
+    await run(
+      {
+        command: "NODE_AGENT_RUN",
+        targetNodeId: node.id,
+        prompt: followUp.trim(),
+        modelKey: "",
+        privacy: "any",
+        intent: "ask",
+      },
+      { nodeId: node.id, label: "Follow-up" },
+    );
+    setBusy(false);
+    setFollowUp("");
+    void load();
+  }
+
+  return (
+    <div className="spork-conversation">
+      {loading ? (
+        <p className="spork-muted">Loading thread…</p>
+      ) : turns && turns.length > 0 ? (
+        <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+          {turns.map((t, i) => (
+            <li key={i} style={{ marginBottom: 10 }}>
+              <span className="spork-eyebrow">{t.role}</span>
+              {t.text && (
+                <p style={{ margin: "2px 0", whiteSpace: "pre-wrap" }}>{t.text}</p>
+              )}
+              {t.tools.map((tool, j) => (
+                <p key={j} className="spork-muted" style={{ margin: "1px 0", fontSize: 12 }}>
+                  ↳ {tool}
+                </p>
+              ))}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="spork-muted">
+          No thread on this node yet. Ask the agent — or make a change — to start
+          one.
+        </p>
+      )}
+      <div className="spork-field" style={{ marginTop: 10 }}>
+        <label htmlFor="node-followup">Follow-up (read-only)</label>
+        <textarea
+          id="node-followup"
+          rows={2}
+          value={followUp}
+          onChange={(e) => setFollowUp(e.target.value)}
+          placeholder="Ask a follow-up about this node…"
+        />
+      </div>
+      <Button
+        variant="primary"
+        busy={busy}
+        disabled={!followUp.trim()}
+        onClick={() => void send()}
+      >
+        Send follow-up
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * Result tab for a deterministic action / observing node (REALIGNMENT_PLAN §5c).
+ * The outcome the node folded into its status badge is shown here; the detailed
+ * recorded **shell Output** (`RUN_STDOUT`) is honestly forward-mapped — no command
+ * reads the `ResultEnvelope` body yet (same honesty contract as the run rail).
+ */
+function ResultTab({ node }: { node: NodeView }): JSX.Element {
+  const badge = statusBadge(node);
+  return (
+    <div className="spork-result">
+      <div className="spork-result-headline" data-status={badge.tone}>
+        <span className="spork-status-dot" aria-hidden="true" />
+        <span>
+          {descriptorFor(node.kind).label} — <strong>{badge.label}</strong>
+        </span>
+      </div>
+      <p className="spork-fwd-note">
+        The detailed recorded shell output + per-unit results surface (the
+        `ResultEnvelope` body / `RUN_STDOUT`) is designed but not yet built — see
+        UI_UX_DESIGN.md §14. The pass/fail outcome above is live and travels with
+        the node. The full deterministic-action node (recorded stdout/stderr) lands
+        with R3/R4.
+      </p>
+    </div>
   );
 }
 
@@ -249,7 +438,7 @@ function InfoTab({
   node: NodeView;
   onSelectParent: (id: string) => void;
 }): JSX.Element {
-  const eff = effectiveStatus(node.status, node.isStale);
+  const badge = statusBadge(node);
   return (
     <>
       <dl className="spork-info">
@@ -260,14 +449,14 @@ function InfoTab({
         </dd>
         <dt>Status</dt>
         <dd>
-          <span className="spork-status" data-status={eff.status} data-stale={eff.stale ? "true" : undefined}>
+          <span className="spork-status" data-status={badge.tone} data-stale={badge.stale ? "true" : undefined}>
             <span className="spork-status-dot" aria-hidden="true" />
-            {eff.label}
-            {eff.stale && <span className="spork-stale-tag"> · stale</span>}
+            {badge.label}
+            {badge.stale && <span className="spork-stale-tag"> · stale</span>}
           </span>
         </dd>
-        <dt>Branch</dt>
-        <dd>{node.branchId}</dd>
+        <dt>Line</dt>
+        <dd title={node.branchId}>{node.lineLabel ?? node.branchId}</dd>
         <dt>Model</dt>
         <dd>{node.model ? humanizeModel(node.model) : "—"}</dd>
         <dt>Cost</dt>

@@ -48,8 +48,12 @@ export type EdgeType =
 /** spork-edges RefKind: serde default (PascalCase) — `"Head" | "Branch" | "Tag"`. */
 export type RefKind = "Head" | "Branch" | "Tag";
 
-/** spork-ipc AgentRunIntent: serde `snake_case`. The read-only P6 intents. */
-export type AgentRunIntent = "ask" | "plan" | "analysis";
+/**
+ * spork-ipc AgentRunIntent: serde `snake_case`. The read-only P6 intents
+ * (`ask`/`plan`/`analysis`) plus the P7.5 code-changing `change` intent (driven
+ * by `NODE_AGENT_EDIT`).
+ */
+export type AgentRunIntent = "ask" | "plan" | "analysis" | "change";
 
 // --- View-model (crates/spork-daemon/src/view.rs) -----------------------------
 
@@ -70,6 +74,25 @@ export interface NodeView {
   cost: CostView | null;
   /** The gate verdict this node carries (P7, gate nodes only), or null. */
   gate: GateVerdictView | null;
+  /**
+   * The per-type **presentation status** (R2, REALIGNMENT_PLAN.md §3b) — the
+   * rich agentic state (`thinking`/`awaiting_input`/`require_review`/…) the
+   * frozen `Lifecycle` can't represent. `null` until the R3 producer emits it;
+   * the badge falls back to the lifecycle status when absent.
+   */
+  presentationStatus: string | null;
+  /**
+   * A friendly label for this node's **line** (lane) — the emergent line a
+   * `branchId` denotes, never user-facing git chrome (R2). `null` only for an
+   * empty id.
+   */
+  lineLabel: string | null;
+  /**
+   * The node this line **forked from** — set iff this node starts a new line
+   * (its `branchId` differs from its first parent's), so the canvas can draw the
+   * fork connector between lanes (R2). `null` for a node continuing its line.
+   */
+  forkedFrom: Ulid | null;
 }
 
 /** The renderer-facing projection of a gate verdict (P7, DESIGN §8.3). */
@@ -191,7 +214,26 @@ export type Command =
   // read-only Lineage/History MCP. All reply inline as `READ`.
   | { command: "NODE_CONTEXT"; nodeId: Ulid }
   | { command: "NODE_HANDOFF"; nodeId: Ulid }
-  | { command: "HISTORY_QUERY"; request: unknown };
+  | { command: "HISTORY_QUERY"; request: unknown }
+  // P7.5 MVP import (docs/MVP_PLAN.md W1, DESIGN.md §10.1, §6.2, A.7 C-2). A
+  // mutation: the daemon captures its working tree into a root snapshot node and
+  // points the branch ref + HEAD at it, so a freshly opened project renders its
+  // code. `origin` is the snapshot origin token ("import" | "manual"); `branchId`
+  // defaults to "main" when empty.
+  | { command: "PROJECT_IMPORT"; branchId: string; origin: string }
+  // P7.5 MVP code-changing edit (docs/MVP_PLAN.md W4, DESIGN.md §6.6, §9.2). A
+  // mutation: the daemon runs the trusted edit loop against a CoW copy of the
+  // target's snapshot (the real checkout is never touched) and creates a
+  // `codebase-edit` node owning the mutated snapshot, applying §6.6
+  // fork-on-divergence + auto-Sanity. The Edit node arrives over the op-log; the
+  // reply ids carry `{ editNodeId, branchId, forked, model, costMicroUsd, sanity }`.
+  | {
+      command: "NODE_AGENT_EDIT";
+      targetNodeId: Ulid;
+      prompt: string;
+      modelKey: string;
+      privacy: string;
+    };
 
 /** The command tag literal type, for exhaustive switching. */
 export type CommandTag = Command["command"];

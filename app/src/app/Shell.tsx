@@ -7,10 +7,12 @@
 // op-log + ephemeral streams, tracks daemon connection, applies the density
 // preference, and binds ⌘K.
 
-import { useEffect, type JSX } from "react";
+import { useEffect, useRef, type JSX } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { TopBar } from "./TopBar";
 import { Navigator } from "./Navigator";
 import { Canvas } from "../canvas/Canvas";
+import { HeroChat } from "./HeroChat";
 import { NodeDetails } from "./NodeDetails";
 import { RunRail } from "./RunRail";
 import { StatusStrip } from "./StatusStrip";
@@ -21,6 +23,7 @@ import { Icon } from "../ui/icons";
 import { useUiStore } from "../state/store";
 import { useGraphView } from "../state/queries";
 import { listenOpLog, listenEphemeral, isTauri, type Unlisten } from "../ipc/client";
+import { lastProject, openAndImport, forgetProject } from "./onboarding";
 
 /** The composed shell. */
 export function Shell(): JSX.Element {
@@ -31,14 +34,46 @@ export function Shell(): JSX.Element {
   const setPaletteOpen = useUiStore((s) => s.setPaletteOpen);
   const navCollapsed = useUiStore((s) => s.navCollapsed);
   const detailsCollapsed = useUiStore((s) => s.detailsCollapsed);
+  const centerView = useUiStore((s) => s.centerView);
   const density = useUiStore((s) => s.density);
   const connection = useUiStore((s) => s.connection);
+  const projectOpening = useUiStore((s) => s.projectOpening);
+  const setProjectOpening = useUiStore((s) => s.setProjectOpening);
+  const logActivity = useUiStore((s) => s.logActivity);
+  const qc = useQueryClient();
+  const autoOpened = useRef(false);
 
   // Seed the live view-model from the daemon read snapshot.
   const graph = useGraphView();
   useEffect(() => {
     if (graph.data) setView(graph.data);
   }, [graph.data, setView]);
+
+  // One-shot on launch (desktop only): auto-reopen the last project so a returning
+  // user lands back in their graph instead of the onboarding picker (P7.5 MVP).
+  // `projectOpening` gates the canvas + banner so the empty state never flashes.
+  useEffect(() => {
+    if (autoOpened.current || !isTauri()) return;
+    autoOpened.current = true;
+    const path = lastProject();
+    if (!path) return;
+    setProjectOpening(true);
+    void (async () => {
+      try {
+        await openAndImport(path, qc);
+        logActivity("success", `Reopened ${path}`);
+      } catch (err) {
+        // A stale / unreadable project — forget it and fall back to the picker.
+        forgetProject();
+        logActivity(
+          "error",
+          `Could not reopen ${path}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      } finally {
+        setProjectOpening(false);
+      }
+    })();
+  }, [qc, setProjectOpening, logActivity]);
 
   // Connection state: browser (no Tauri) = mock; a "no project open" read error
   // is first-run onboarding (the daemon is alive, it just has no project) — NOT a
@@ -106,9 +141,9 @@ export function Shell(): JSX.Element {
           </button>
         </div>
       )}
-      {connection === "no-project" && (
+      {connection === "no-project" && !projectOpening && (
         <div className="spork-banner spork-banner--info" role="status">
-          <Icon name="git-branch" size={15} />
+          <Icon name="folder" size={15} />
           <span>No project open — open one to begin (the canvas below has the picker).</span>
         </div>
       )}
@@ -119,7 +154,7 @@ export function Shell(): JSX.Element {
       >
         <Navigator />
         <main className="spork-canvas-region" style={{ minWidth: 0, minHeight: 0 }}>
-          <Canvas />
+          {centerView === "chat" ? <HeroChat /> : <Canvas />}
         </main>
         {!detailsCollapsed && <NodeDetails />}
       </div>

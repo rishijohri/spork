@@ -11,7 +11,7 @@ import { Handle, Position } from "@xyflow/react";
 import type { NodeView } from "../ipc/types";
 import type { NodeTypeDescriptor } from "./descriptors";
 import { Icon } from "../ui/icons";
-import { effectiveStatus, humanizeModel } from "../ui/format";
+import { humanizeModel, statusBadge } from "../ui/format";
 
 /** The data the canvas attaches to each React Flow node. */
 export interface NodeCardData {
@@ -27,7 +27,7 @@ const HANDLE_STYLE = { opacity: 0, width: 1, height: 1, border: "none" } as cons
 /** A rich, schema-driven node card. */
 function NodeCardImpl({ data }: { data: NodeCardData }): JSX.Element {
   const { node, descriptor, selected, dimmed } = data;
-  const eff = effectiveStatus(node.status, node.isStale);
+  const badge = statusBadge(node);
 
   return (
     <div
@@ -54,26 +54,25 @@ function NodeCardImpl({ data }: { data: NodeCardData }): JSX.Element {
           <span className="spork-card-kind">{descriptor.label}</span>
           <span
             className="spork-status"
-            data-status={eff.status}
-            data-stale={eff.stale ? "true" : undefined}
-            title={eff.stale ? `${eff.label} · stale` : eff.label}
+            data-status={badge.tone}
+            data-stale={badge.stale ? "true" : undefined}
+            title={badge.stale ? `${badge.label} · stale` : badge.label}
           >
             <span className="spork-status-dot" aria-hidden="true" />
-            {eff.label}
-            {eff.stale && <span className="spork-stale-tag"> · stale</span>}
+            {badge.label}
+            {badge.stale && <span className="spork-stale-tag"> · stale</span>}
           </span>
         </div>
-        <div className="spork-card-meta">
-          <span className="spork-chip" title={`branch ${node.branchId}`}>
-            <Icon name="git-branch" size={11} />
-            {node.branchId}
-          </span>
-          {node.model && (
+        {/* Lane membership is shown by the node's swimlane position, so the raw
+            branchId chip is gone (REALIGNMENT_PLAN §5a) — only the model chip
+            remains in the meta row. */}
+        {node.model && (
+          <div className="spork-card-meta">
             <span className="spork-chip" title={node.model}>
               ◆ {humanizeModel(node.model)}
             </span>
-          )}
-        </div>
+          </div>
+        )}
       </div>
       {node.ownsSnapshot && (
         <span

@@ -45,8 +45,8 @@ export function CommandPalette(): JSX.Element | null {
         list.push({ id: "restore", label: "Restore selected node", icon: "corner-up-left", run: () => openModal({ kind: "restore", nodeId: node.id }) });
       if (mat)
         list.push({ id: "check", label: "Run validation on selected node", icon: "play", run: () => void run({ command: "NODE_RUN_CHECK", targetNodeId: node.id, spec: { kind: "validation" } }, { nodeId: node.id, label: "validation check" }) });
-      list.push({ id: "branch", label: "New branch from selected node", icon: "git-branch", run: () => openModal({ kind: "newBranch", nodeId: node.id }) });
-      list.push({ id: "merge", label: "Merge from selected node", icon: "git-merge", run: () => openModal({ kind: "merge", nodeId: node.id }) });
+      list.push({ id: "ask", label: "Ask agent about selected node", icon: "messages-square", run: () => openModal({ kind: "askAgent", nodeId: node.id }) });
+      list.push({ id: "merge", label: "Merge selected node into a line", icon: "git-merge", run: () => openModal({ kind: "merge", nodeId: node.id }) });
       if (mat) {
         list.push({ id: "commit", label: "Commit selected node to Git", icon: "git-commit", run: () => openModal({ kind: "commit", nodeId: node.id }) });
         list.push({ id: "push", label: "Push selected node", icon: "upload", run: () => openModal({ kind: "push", nodeId: node.id }) });
@@ -66,7 +66,7 @@ export function CommandPalette(): JSX.Element | null {
     ? view.nodes
         .filter((n) => {
           const d = descriptorFor(n.kind);
-          return `${d.label} ${n.kind} ${n.id} ${n.branchId}`.toLowerCase().includes(ql);
+          return `${d.label} ${n.kind} ${n.id} ${n.lineLabel ?? n.branchId}`.toLowerCase().includes(ql);
         })
         .slice(0, 6)
         .map((n) => ({

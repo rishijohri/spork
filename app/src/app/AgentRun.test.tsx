@@ -18,7 +18,7 @@ const TARGET = "00000000000000000000000001";
 
 function view(): GraphView {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     nodes: [
       {
         id: TARGET,
@@ -33,6 +33,9 @@ function view(): GraphView {
         model: "anthropic/claude-sonnet-4-6",
         cost: null,
         gate: null,
+        presentationStatus: null,
+        lineLabel: "main",
+        forkedFrom: null,
       },
     ],
     edges: [],
@@ -87,6 +90,41 @@ describe("Ask-agent modal (NODE_AGENT_RUN)", () => {
     expect(cmd.intent).toBe("analysis");
   });
 
+  it("the 'change' intent dispatches NODE_AGENT_EDIT and attaches an Edit node (P7.5 W4)", async () => {
+    renderModals();
+    fireEvent.change(screen.getByLabelText("Prompt"), {
+      target: { value: "add a retry" },
+    });
+    fireEvent.change(screen.getByLabelText("Intent"), {
+      target: { value: "change" },
+    });
+    // The action button relabels to "Make change".
+    fireEvent.click(screen.getByRole("button", { name: "Make change" }));
+
+    await waitFor(() => {
+      const edits = getDispatchedCommands().filter(
+        (c) => c.command === "NODE_AGENT_EDIT",
+      );
+      expect(edits).toHaveLength(1);
+    });
+    const edit = getDispatchedCommands().find(
+      (c): c is Extract<Command, { command: "NODE_AGENT_EDIT" }> =>
+        c.command === "NODE_AGENT_EDIT",
+    )!;
+    expect(edit.targetNodeId).toBe(TARGET);
+    expect(edit.prompt).toBe("add a retry");
+    // No read-only NODE_AGENT_RUN was sent for a change.
+    expect(lastAgentRun()).toBeUndefined();
+
+    // The Edit node was upserted into the view (renders as a codebase-edit child).
+    await waitFor(() => {
+      const editNodes = useUiStore
+        .getState()
+        .view.nodes.filter((n) => n.kind === "codebase-edit" && n.id !== TARGET);
+      expect(editNodes.length).toBe(1);
+    });
+  });
+
   it("local-only checkbox sends privacy=local_only", async () => {
     renderModals();
     fireEvent.change(screen.getByLabelText("Prompt"), { target: { value: "q" } });
@@ -125,7 +163,7 @@ describe("Ask-agent modal (NODE_AGENT_RUN)", () => {
     renderModals();
     fireEvent.change(screen.getByLabelText("Prompt"), { target: { value: "q" } });
     fireEvent.change(screen.getByLabelText("Model"), {
-      target: { value: "cli/copilot-cli" },
+      target: { value: "local/llama3.1" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Ask" }));
     await waitFor(() => {

@@ -41,6 +41,9 @@ function gateNode(): NodeView {
       lineageHash: "b3:abc",
       overridden: false,
     },
+    presentationStatus: null,
+    lineLabel: "main",
+    forkedFrom: null,
   };
 }
 

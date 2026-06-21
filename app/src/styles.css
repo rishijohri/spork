@@ -765,6 +765,17 @@ textarea:focus-visible {
   gap: 8px;
   margin-top: 4px;
 }
+/* Inline error under the onboarding actions (always visible, regardless of the
+   collapsible activity rail). */
+.spork-error {
+  margin-top: 10px;
+  padding: 8px 12px;
+  border-radius: var(--r-control);
+  background: color-mix(in srgb, var(--status-failed, #ef4444) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-failed, #ef4444) 45%, transparent);
+  color: var(--fg);
+  font-size: 12px;
+}
 
 /* generic banner (disconnected) */
 .spork-banner {
@@ -1223,6 +1234,11 @@ textarea:focus-visible {
   position: fixed;
   z-index: 60;
   min-width: 210px;
+  /* Never taller/wider than the viewport — a long menu scrolls instead of
+     clipping below the bottom edge (paired with the JS viewport clamp). */
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
   padding: 5px;
   background: var(--bg-overlay);
   border: 1px solid var(--border-strong);
@@ -1264,9 +1280,15 @@ textarea:focus-visible {
 
 /* settings popover */
 .spork-popover {
-  position: absolute;
+  /* Positioned by its wrapper in TopBar (an absolute `top:100% right:0` div);
+     this box must NOT also be absolute or it ignores that anchor and overflows
+     off the right edge of the window (double-absolute bug). */
+  position: relative;
   z-index: 40;
   width: 300px;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
   background: var(--bg-overlay);
   border: 1px solid var(--border-strong);
   border-radius: var(--r-panel);
@@ -1366,3 +1388,229 @@ textarea:focus-visible {
 }
 .spork-lineage-result strong { display: block; margin-bottom: 3px; font-size: 11px; }
 .spork-checkbox { display: flex; align-items: center; gap: 7px; margin-top: 10px; font-size: 12px; }
+
+/* ============================================================================
+ * R2 — Timeline-first reframe (REALIGNMENT_PLAN §5): line breadcrumb, view
+ * toggle, "+ New node" menu, LINES navigator, swimlanes, the hero chat.
+ * ========================================================================== */
+
+/* Status-dot tones reused outside .spork-status (chat turns, result, line dots). */
+[data-status="passed"] > .spork-status-dot,
+.spork-result-headline[data-status="passed"] .spork-status-dot { background: var(--ok); }
+.spork-turn-state[data-status="passed"] { color: var(--ok); }
+.spork-turn-state[data-status="failed"] { color: var(--danger); }
+.spork-turn-state[data-status="running"] { color: var(--info); }
+.spork-turn-state[data-status="pending"] { color: var(--neutral); }
+.spork-turn-state[data-status="blocked"] { color: var(--warn); }
+.spork-turn-state[data-status="cancelled"] { color: var(--fg-faint); }
+
+/* TopBar — informational line breadcrumb (replaces the branch switcher). */
+.spork-line-crumb {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 9px; border-radius: 999px;
+  color: var(--fg-muted); font-size: 12px;
+  background: var(--bg-sunken); border: 1px solid var(--border-subtle);
+}
+.spork-line-name { color: var(--fg); font-weight: 600; }
+.spork-viewtoggle button { display: inline-flex; align-items: center; gap: 5px; }
+
+/* "+ New node from here" menu. */
+.spork-newnode-menu { min-width: 250px; padding: 4px; }
+.spork-ctx-eyebrow {
+  display: block; padding: 5px 9px 3px; font-size: 10px; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--fg-faint);
+}
+.spork-newnode-group { padding: 2px 0; }
+.spork-newnode-group + .spork-newnode-group {
+  margin-top: 2px; border-top: 1px solid var(--border-subtle); padding-top: 4px;
+}
+.spork-ctx-grouplabel {
+  display: block; padding: 2px 9px; font-size: 10px; font-weight: 700;
+  letter-spacing: 0.05em; color: var(--accent);
+}
+.spork-newnode-item { align-items: flex-start; gap: 9px; }
+.spork-newnode-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.spork-newnode-label { font-size: 12px; color: var(--fg); }
+.spork-newnode-help { font-size: 10px; color: var(--fg-faint); }
+.spork-newnode-item:disabled { opacity: 0.4; }
+
+/* Navigator — LINES overview. */
+.spork-line-row { gap: 8px; }
+.spork-line-dot {
+  width: 9px; height: 9px; border-radius: 50%; flex: none;
+  background: var(--neutral);
+}
+.spork-line-dot[data-rollup="passed"] { background: var(--ok); }
+.spork-line-dot[data-rollup="running"] { background: var(--info); }
+.spork-line-dot[data-rollup="blocked"] { background: var(--warn); }
+.spork-line-dot[data-rollup="failed"] { background: var(--danger); }
+.spork-line-dot[data-rollup="pending"] { background: transparent; border: 1.5px solid var(--neutral); }
+.spork-line-rowname { flex: 1; min-width: 0; white-space: nowrap; }
+.spork-line-forkmark { color: var(--accent); margin-right: 1px; }
+
+/* Canvas — swimlane bands (one per emergent line). */
+.spork-lanes-layer { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+.spork-lane-band {
+  border-top: 1px dashed var(--border-subtle);
+  border-bottom: 1px dashed var(--border-subtle);
+  transition: background 0.15s ease, opacity 0.15s ease;
+}
+.spork-lane-band[data-lane-index="1"] { background: rgba(124, 140, 255, 0.025); }
+.spork-lane-band[data-lane-index="0"] { background: rgba(255, 255, 255, 0.012); }
+.spork-lane-band--focused {
+  background: var(--accent-quiet);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.spork-lane-band--dim { opacity: 0.4; }
+.spork-lane-gutter {
+  position: absolute; top: 6px; left: 8px; pointer-events: auto;
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border-radius: 999px;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.02em;
+  color: var(--fg-muted);
+  background: var(--bg-surface); border: 1px solid var(--border-subtle);
+  cursor: pointer;
+}
+.spork-lane-gutter:hover { color: var(--fg); border-color: var(--border-strong); }
+.spork-lane-fork { color: var(--accent); }
+
+/* ----- Hero chat — a first-class view of one line (messages are nodes). ----- */
+.spork-chat {
+  --mode: var(--accent);
+  display: flex; flex-direction: column; height: 100%; min-height: 0;
+  background:
+    radial-gradient(120% 80% at 100% 0%, color-mix(in srgb, var(--mode) 7%, transparent), transparent 60%),
+    var(--bg-base);
+}
+.spork-chat-empty {
+  margin: auto; text-align: center; color: var(--fg-muted);
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+}
+.spork-chat-empty h3 { margin: 4px 0 0; color: var(--fg); }
+.spork-chat-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px; border-bottom: 1px solid var(--border-subtle);
+}
+.spork-chat-linemark {
+  display: inline-flex; padding: 6px; border-radius: 8px;
+  color: var(--mode); background: color-mix(in srgb, var(--mode) 14%, transparent);
+}
+.spork-chat-headtext { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+.spork-chat-linename { font-weight: 700; font-size: 14px; color: var(--fg); }
+.spork-chat-linesub { font-size: 11px; color: var(--fg-faint); }
+.spork-chat-jump {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 10px; border-radius: 7px; font-size: 12px;
+  color: var(--fg-muted); background: var(--bg-surface);
+  border: 1px solid var(--border-subtle); cursor: pointer;
+}
+.spork-chat-jump:hover { color: var(--fg); border-color: var(--border-strong); }
+.spork-chat-thread {
+  position: relative; flex: 1; min-height: 0; overflow-y: auto;
+  padding: 18px 20px 18px 26px;
+}
+.spork-chat-spine {
+  position: absolute; left: 33px; top: 18px; bottom: 18px; width: 2px;
+  background: linear-gradient(var(--border-subtle), transparent);
+}
+.spork-chat-hint { padding: 10px 0; }
+.spork-turn { position: relative; display: flex; gap: 14px; padding: 6px 0 16px; }
+.spork-turn-node {
+  position: relative; z-index: 1; flex: none;
+  width: 22px; height: 22px; border-radius: 7px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: #0b0e16;
+  box-shadow: 0 0 0 4px var(--bg-base);
+}
+.spork-turn-body {
+  flex: 1; min-width: 0;
+  background: var(--bg-surface); border: 1px solid var(--border-subtle);
+  border-radius: 12px; padding: 11px 13px;
+}
+.spork-turn--selected .spork-turn-body {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.spork-turn-msg + .spork-turn-msg { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-subtle); }
+.spork-turn-role {
+  font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg-faint);
+}
+.spork-turn-msg[data-role="user"] .spork-turn-role { color: var(--accent); }
+.spork-turn-text { margin: 3px 0 0; white-space: pre-wrap; line-height: 1.5; color: var(--fg); font-size: 13px; }
+.spork-turn-tool { margin: 2px 0 0; font-size: 11px; }
+.spork-turn-meta {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  margin-top: 9px; padding-top: 8px; border-top: 1px solid var(--border-subtle);
+  font-size: 10px; color: var(--fg-faint);
+}
+.spork-turn-kind { font-weight: 700; }
+.spork-turn-state { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; }
+.spork-turn-state .spork-status-dot { width: 7px; height: 7px; }
+.spork-turn-open {
+  margin-left: auto; color: var(--accent); cursor: pointer;
+  background: none; border: none; font-size: 10px;
+}
+.spork-turn-open:hover { color: var(--accent-hover); }
+.spork-chat-event {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  margin: 0 0 12px 36px; padding: 5px 11px;
+  background: var(--bg-sunken); border: 1px dashed var(--border-subtle);
+  border-radius: 999px; color: var(--fg-muted); font-size: 11px; cursor: pointer;
+}
+.spork-chat-event:hover { border-color: var(--border-strong); }
+.spork-chat-event--selected { border-style: solid; border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+.spork-chat-eventkind { font-weight: 600; color: var(--fg); }
+
+/* Composer — picks an agentic mode; the send is themed by the mode color. */
+.spork-composer {
+  border-top: 1px solid var(--border-subtle);
+  padding: 12px 16px 14px; background: var(--bg-surface);
+  display: flex; flex-direction: column; gap: 9px;
+}
+.spork-composer-modes { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.spork-mode {
+  --mc: var(--accent);
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 11px; border-radius: 999px; font-size: 12px; cursor: pointer;
+  color: var(--fg-muted);
+  background: var(--bg-sunken); border: 1px solid var(--border-subtle);
+}
+.spork-mode:hover { color: var(--fg); }
+.spork-mode--on {
+  color: var(--mc); border-color: color-mix(in srgb, var(--mc) 55%, transparent);
+  background: color-mix(in srgb, var(--mc) 14%, transparent);
+}
+.spork-composer-input {
+  width: 100%; resize: vertical; min-height: 56px;
+  background: var(--bg-base); color: var(--fg);
+  border: 1px solid var(--border-subtle); border-radius: 10px;
+  padding: 10px 12px; font-family: var(--font-ui); font-size: 13px; line-height: 1.5;
+}
+.spork-composer-input:focus {
+  outline: none; border-color: color-mix(in srgb, var(--mode) 60%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mode) 18%, transparent);
+}
+.spork-composer-foot { display: flex; align-items: center; gap: 12px; }
+.spork-composer-model {
+  display: inline-flex; align-items: center; gap: 5px; color: var(--fg-muted); font-size: 12px;
+}
+.spork-composer-model select {
+  background: var(--bg-sunken); color: var(--fg);
+  border: 1px solid var(--border-subtle); border-radius: 6px; padding: 2px 6px; font-size: 12px;
+}
+.spork-composer-context { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; }
+.spork-composer-send { background: var(--mode); border-color: var(--mode); }
+.spork-composer-send:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--mode) 85%, white); border-color: var(--mode);
+}
+
+/* Node-Details — Result tab headline. */
+.spork-result-headline {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 13px; color: var(--fg); margin-bottom: 8px;
+}
+.spork-result-headline[data-status="failed"] .spork-status-dot { background: var(--danger); }
+.spork-result-headline[data-status="running"] .spork-status-dot { background: var(--info); }
+.spork-result-headline[data-status="blocked"] .spork-status-dot { background: var(--warn); }
+.spork-result-headline[data-status="pending"] .spork-status-dot { background: var(--neutral); }
+.spork-mono { font-family: var(--font-mono); }

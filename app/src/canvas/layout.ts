@@ -98,3 +98,112 @@ export function fallbackLayout(
     };
   });
 }
+
+/** A horizontal **swimlane** band for one emergent line (REALIGNMENT_PLAN §5a). */
+export interface LaneBand {
+  /** The internal branch id this lane represents (never shown raw). */
+  branchId: string;
+  /** The friendly line label drawn in the gutter. */
+  label: string;
+  /** The lane's row index (main = 0). */
+  index: number;
+  /** The band's top edge in flow coordinates. */
+  yTop: number;
+  /** The band's height. */
+  height: number;
+  /** Where this line forked from (drives the ↳ gutter mark), or null. */
+  forkedFrom: string | null;
+}
+
+/** A lane-aware layout: positions grouped into per-line swimlanes + the bands. */
+export interface LaneLayout {
+  positions: NodePosition[];
+  lanes: LaneBand[];
+  /** The total band width spanning every depth column. */
+  width: number;
+}
+
+const COL_W = NODE_W + 110;
+const SUBROW_H = NODE_H + 18;
+const LANE_PAD = 26;
+
+/**
+ * Lay nodes out in **swimlanes** — one horizontal band per emergent line
+ * (`branchId`), X by lineage depth — so a fork visibly drops into a new lane
+ * (REALIGNMENT_PLAN §5a). `lines` fixes the lane order (main first); any
+ * branchId not in `lines` is appended defensively. Deterministic + dependency-
+ * free, so the canvas mounts with stable lane positions immediately.
+ */
+export function laneLayout(
+  nodes: readonly NodeView[],
+  lines: readonly { branchId: string; label: string; forkedFrom: string | null }[],
+): LaneLayout {
+  const laneIndex = new Map<string, number>();
+  lines.forEach((l) => laneIndex.set(l.branchId, laneIndex.size));
+  for (const n of nodes) {
+    if (!laneIndex.has(n.branchId)) laneIndex.set(n.branchId, laneIndex.size);
+  }
+
+  const depth = new Map<string, number>();
+  for (const n of nodes) {
+    depth.set(
+      n.id,
+      n.parentIds.reduce((max, p) => Math.max(max, (depth.get(p) ?? 0) + 1), 0),
+    );
+  }
+
+  // Allocate a within-lane sub-row per node so two nodes at the same depth in the
+  // same lane don't overlap (e.g. an observing check beside its edit).
+  const subRow = new Map<string, number>();
+  const cellCount = new Map<string, number>();
+  const laneRows = new Map<number, number>();
+  for (const n of nodes) {
+    const lane = laneIndex.get(n.branchId) ?? 0;
+    const d = depth.get(n.id) ?? 0;
+    const key = `${lane}:${d}`;
+    const c = cellCount.get(key) ?? 0;
+    subRow.set(n.id, c);
+    cellCount.set(key, c + 1);
+    laneRows.set(lane, Math.max(laneRows.get(lane) ?? 1, c + 1));
+  }
+
+  const laneCount = laneIndex.size;
+  const laneYTop = new Map<number, number>();
+  let y = 0;
+  for (let i = 0; i < laneCount; i++) {
+    laneYTop.set(i, y);
+    y += (laneRows.get(i) ?? 1) * SUBROW_H + LANE_PAD * 2;
+  }
+
+  const positions: NodePosition[] = nodes.map((n) => {
+    const lane = laneIndex.get(n.branchId) ?? 0;
+    const d = depth.get(n.id) ?? 0;
+    const sr = subRow.get(n.id) ?? 0;
+    return {
+      id: n.id,
+      x: d * COL_W + 56,
+      y: (laneYTop.get(lane) ?? 0) + LANE_PAD + sr * SUBROW_H,
+    };
+  });
+
+  const maxDepth = nodes.length
+    ? Math.max(...Array.from(depth.values()))
+    : 0;
+  const width = (maxDepth + 1) * COL_W + 80;
+
+  const lanes: LaneBand[] = Array.from(laneIndex.entries())
+    .map(([branchId, index]) => {
+      const line = lines.find((l) => l.branchId === branchId);
+      return {
+        branchId,
+        label: line?.label ?? branchId,
+        index,
+        yTop: laneYTop.get(index) ?? 0,
+        height: (laneRows.get(index) ?? 1) * SUBROW_H + LANE_PAD * 2,
+        forkedFrom: line?.forkedFrom ?? null,
+      };
+    })
+    .sort((a, b) => a.index - b.index);
+
+  return { positions, lanes, width };
+}

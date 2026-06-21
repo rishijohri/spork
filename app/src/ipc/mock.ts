@@ -47,6 +47,8 @@ interface MockState {
   dispatched: Command[];
   /** Recorded `open_project` paths, in call order. */
   openedProjects: string[];
+  /** Recorded `set_agent_config` payloads, in call order (P7.5 W3). */
+  agentConfigs: unknown[];
   /** Per-command-tag canned replies for `dispatch`. */
   dispatchReplies: Partial<Record<Command["command"], CommandResult>>;
   /**
@@ -85,6 +87,7 @@ function freshState(): MockState {
     graphView: structuredClone(EMPTY_GRAPH),
     dispatched: [],
     openedProjects: [],
+    agentConfigs: [],
     dispatchReplies: {},
     dispatchErrors: {},
     defaultDispatchReply: (cmd) => defaultReplyFor(cmd),
@@ -151,6 +154,23 @@ function defaultReplyFor(cmd: Command): CommandResult {
           outputTokens: cost.outputTokens,
           fallbacks: 0,
           intent: cmd.intent,
+        },
+      };
+    }
+    case "NODE_AGENT_EDIT": {
+      // Mirror the daemon: a code-changing edit mints an Edit node owning a new
+      // snapshot, on the target's branch (a tip continues, here forked=false).
+      const cost = mockAgentCost(cmd.modelKey);
+      return {
+        result: "MUTATION",
+        opId: fakeUlid(),
+        ids: {
+          editNodeId: fakeUlid(),
+          branchId: "main",
+          forked: false,
+          model: cmd.modelKey || "local/llama3.1",
+          costMicroUsd: cost.microUsd,
+          sanity: "passed",
         },
       };
     }
@@ -244,6 +264,31 @@ function mockHistoryResponse(request: unknown): Record<string, unknown> {
     return { jsonrpc: "2.0", id, result: { tools } };
   }
   if (method === "tools/call") {
+    const params = (req["params"] ?? {}) as Record<string, unknown>;
+    if (params["name"] === "get_node_transcript") {
+      // A realistic canonical transcript (externally-tagged snake_case blocks),
+      // double-wrapped as the History MCP returns it, so the Conversation tab
+      // renders something in browser-mock mode (P7.5 W5b).
+      const transcript = JSON.stringify({
+        schema_version: 1,
+        turns: [
+          { role: "user", content: [{ text: "What does this node do?" }], opaque: [] },
+          {
+            role: "assistant",
+            content: [{ text: "It captures the project as the root snapshot." }],
+            opaque: [],
+          },
+        ],
+      });
+      return {
+        jsonrpc: "2.0",
+        id,
+        result: {
+          content: [{ type: "text", text: JSON.stringify({ transcript }) }],
+          isError: false,
+        },
+      };
+    }
     return {
       jsonrpc: "2.0",
       id,
@@ -284,6 +329,7 @@ function mintedIdsFor(cmd: Command): Record<string, unknown> {
     case "NODE_RESTORE":
     case "NODE_RUN_CHECK":
     case "BRANCH_MERGE":
+    case "PROJECT_IMPORT":
       return { nodeId: fakeUlid() };
     case "BRANCH_FORK":
       return { refId: cmd.name };
@@ -418,6 +464,19 @@ function autoEmitFor(cmd: Command, reply: CommandResult): OpLogEvent[] {
       if (nodeId)
         events.push({ type: "MERGE_PERFORMED", seq: seq(), nodeId });
       break;
+    case "PROJECT_IMPORT":
+      // P7.5 W1: the imported root renders as a snapshot node on the branch tip.
+      if (nodeId) {
+        events.push({
+          type: "NODE_CREATED",
+          seq: seq(),
+          nodeId,
+          schemaVersion: 1,
+        });
+        events.push({ type: "REF_CREATED", seq: seq(), ref: cmd.branchId });
+        events.push({ type: "REF_MOVED", seq: seq(), ref: "HEAD", to: nodeId });
+      }
+      break;
     case "OP_UNDO":
       events.push({ type: "OP_UNDONE", seq: seq() });
       break;
@@ -439,6 +498,21 @@ function autoEmitFor(cmd: Command, reply: CommandResult): OpLogEvent[] {
         });
       }
       break;
+    case "NODE_AGENT_EDIT": {
+      // The Edit node is upserted by the modal from the reply; emit NODE_CREATED
+      // (keyed by editNodeId) so the optimistic op reconciles against it.
+      const editId =
+        typeof ids["editNodeId"] === "string" ? (ids["editNodeId"] as Ulid) : null;
+      if (editId) {
+        events.push({
+          type: "NODE_CREATED",
+          seq: seq(),
+          nodeId: editId,
+          schemaVersion: 1,
+        });
+      }
+      break;
+    }
     default:
       break;
   }
@@ -499,6 +573,11 @@ export function getOpenedProjects(): readonly string[] {
   return state.openedProjects;
 }
 
+/** The recorded list of `set_agent_config` payloads, in call order (P7.5 W3). */
+export function getAgentConfigs(): readonly unknown[] {
+  return state.agentConfigs;
+}
+
 /** Whether the mock is in browser-mock auto-emit mode. */
 export function isAutoEmit(): boolean {
   return state.autoEmit;
@@ -531,6 +610,10 @@ const DEMO_ROOT = "01DEMO00000000000000000ROOT";
 const DEMO_EDIT = "01DEMO00000000000000000EDIT";
 const DEMO_VALD = "01DEMO000000000000000VALIDAT";
 const DEMO_SNAP = "01DEMO00000000000000000SNAP2";
+// A second, forked "agent" line so the swimlanes + state badges are visible (R2).
+const DEMO_WORK = "01DEMO00000000000000WORK001";
+const DEMO_ASK = "01DEMO0000000000000000ASK01";
+const DEMO_LINE = "agent/01DEMOWORK";
 
 function demoNode(
   id: Ulid,
@@ -542,7 +625,14 @@ function demoNode(
   model: string | null,
   cost: NodeView["cost"] = null,
   gate: NodeView["gate"] = null,
+  opts: {
+    branchId?: string;
+    lineLabel?: string;
+    forkedFrom?: Ulid | null;
+    presentationStatus?: string | null;
+  } = {},
 ): NodeView {
+  const branchId = opts.branchId ?? "main";
   return {
     id,
     kind,
@@ -551,11 +641,17 @@ function demoNode(
     isStale: false,
     ownsSnapshot,
     snapshotHash: ownsSnapshot ? `b3:${id}` : null,
-    branchId: "main",
+    branchId,
     parentIds,
     model,
     cost,
     gate,
+    // R2 additive view fields (REALIGNMENT_PLAN.md §5a): the demo DAG shows a
+    // forked agent line + a sample presentation state so the swimlanes + badges
+    // are visible in browser-mock mode.
+    presentationStatus: opts.presentationStatus ?? null,
+    lineLabel: opts.lineLabel ?? branchId,
+    forkedFrom: opts.forkedFrom ?? null,
   };
 }
 
@@ -595,17 +691,47 @@ export function demoGraphView(): GraphView {
       [DEMO_EDIT],
       "claude-sonnet-4-6",
     ),
+    // A code-changing agent Work node that forked a new "agent" line off the Edit
+    // (fork-on-divergence) — shows a second swimlane + a live state badge.
+    demoNode(
+      DEMO_WORK,
+      "codebase-edit",
+      "mutating",
+      "blocked",
+      true,
+      [DEMO_EDIT],
+      "local/llama3.1",
+      { inputTokens: 1800, outputTokens: 420, microUsd: 0 },
+      null,
+      { branchId: DEMO_LINE, lineLabel: "agent · 01DEMOWO", forkedFrom: DEMO_EDIT, presentationStatus: "require_review" },
+    ),
+    // An Ask context node on the agent line (attaches; carries a conversation).
+    demoNode(
+      DEMO_ASK,
+      "agent-context",
+      "context",
+      "passed",
+      false,
+      [DEMO_WORK],
+      "local/llama3.1",
+      { inputTokens: 900, outputTokens: 240, microUsd: 0 },
+      null,
+      { branchId: DEMO_LINE, lineLabel: "agent · 01DEMOWO", presentationStatus: "complete" },
+    ),
   ];
   const edges = [
     { from: DEMO_ROOT, to: DEMO_EDIT, edgeType: "PARENT_CHILD" as EdgeType },
     { from: DEMO_EDIT, to: DEMO_VALD, edgeType: "VALIDATES" as EdgeType },
     { from: DEMO_EDIT, to: DEMO_SNAP, edgeType: "PARENT_CHILD" as EdgeType },
+    { from: DEMO_EDIT, to: DEMO_WORK, edgeType: "PARENT_CHILD" as EdgeType },
+    { from: DEMO_WORK, to: DEMO_ASK, edgeType: "DERIVED_FROM" as EdgeType },
   ];
   const refs = [
     { name: "HEAD", kind: "Head" as const, target: DEMO_EDIT },
     { name: "main", kind: "Branch" as const, target: DEMO_EDIT },
+    { name: DEMO_LINE, kind: "Branch" as const, target: DEMO_WORK },
   ];
-  return { schemaVersion: 1, nodes, edges, refs };
+  return { schemaVersion: 2, nodes, edges, refs };
 }
 
 /** A plausible changed-path set for any demo node (browser-mock mode). */
@@ -655,6 +781,12 @@ export async function mockInvoke<T>(
     }
     case "graph_view":
       return structuredClone(state.graphView) as unknown as T;
+    case "set_agent_config": {
+      // P7.5 W3: an app-local command (not a frozen IPC Command). Record the
+      // chosen provider for assertions; a no-op in the mock (no real daemon).
+      state.agentConfigs.push(args?.["config"]);
+      return undefined as unknown as T;
+    }
     case "dispatch": {
       const cmd = args?.["command"] as Command;
       state.dispatched.push(cmd);

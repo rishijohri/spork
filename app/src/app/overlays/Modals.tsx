@@ -26,8 +26,6 @@ export function Modals(): JSX.Element | null {
     view.nodes.find((n) => n.id === id) ?? null;
 
   switch (modal.kind) {
-    case "newBranch":
-      return <NewBranchModal node={node(modal.nodeId)} nodeId={modal.nodeId} />;
     case "merge":
       return <MergeModal node={node(modal.nodeId)} nodeId={modal.nodeId} />;
     case "restore":
@@ -39,7 +37,13 @@ export function Modals(): JSX.Element | null {
     case "gc":
       return <GcModal />;
     case "askAgent":
-      return <AskAgentModal node={node(modal.nodeId)} nodeId={modal.nodeId} />;
+      return (
+        <AskAgentModal
+          node={node(modal.nodeId)}
+          nodeId={modal.nodeId}
+          initialIntent={modal.intent}
+        />
+      );
     case "capability":
       return <CapabilityModal capability={modal.capability} action={modal.action} />;
     default:
@@ -58,21 +62,92 @@ function strId(ids: Record<string, unknown>, key: string, fallback = ""): string
 }
 
 /** Ask the agent — NODE_AGENT_RUN (read-only; attaches a context node). */
-function AskAgentModal({ node, nodeId }: { node: NodeView | null; nodeId: string }): JSX.Element {
+function AskAgentModal({
+  node,
+  nodeId,
+  initialIntent,
+}: {
+  node: NodeView | null;
+  nodeId: string;
+  /** Pre-selected agentic mode when opened from a "+ New node ▾" item (R2). */
+  initialIntent?: AgentRunIntent | undefined;
+}): JSX.Element {
   const close = useClose();
   const { run } = useActions();
   const defaultModel = useUiStore((s) => s.defaultModel);
   const attachAgentNode = useUiStore((s) => s.attachAgentNode);
+  const attachEditNode = useUiStore((s) => s.attachEditNode);
+  const selectNode = useUiStore((s) => s.selectNode);
   const [prompt, setPrompt] = useState("");
   const [model, setModel] = useState(defaultModel);
   const [privacy, setPrivacy] = useState("any");
-  const [intent, setIntent] = useState<AgentRunIntent>("ask");
+  const [intent, setIntent] = useState<AgentRunIntent>(initialIntent ?? "ask");
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<{ model: string; cost: CostView } | null>(null);
+  const [result, setResult] = useState<{
+    model: string;
+    cost: CostView;
+    edit?: { branchId: string; forked: boolean; sanity: string | null };
+  } | null>(null);
+
+  const isChange = intent === "change";
 
   async function ask(): Promise<void> {
     if (!prompt.trim()) return;
     setBusy(true);
+
+    // The code-changing intent goes to NODE_AGENT_EDIT: the daemon edits a CoW
+    // copy and the Edit node arrives over the op-log (no manual attach).
+    if (isChange) {
+      const res = await run(
+        {
+          command: "NODE_AGENT_EDIT",
+          targetNodeId: nodeId,
+          prompt: prompt.trim(),
+          modelKey: model,
+          privacy,
+        },
+        { nodeId, label: "Make change" },
+      );
+      setBusy(false);
+      if (res && res.result === "MUTATION") {
+        const ids = res.ids;
+        setResult({
+          model: strId(ids, "model", model),
+          cost: { inputTokens: 0, outputTokens: 0, microUsd: numId(ids, "costMicroUsd") },
+          edit: {
+            branchId: strId(ids, "branchId", node?.branchId ?? "main"),
+            forked: ids["forked"] === true,
+            sanity: typeof ids["sanity"] === "string" ? (ids["sanity"] as string) : null,
+          },
+        });
+        const editId = strId(ids, "editNodeId");
+        if (editId) {
+          const editNode: NodeView = {
+            id: editId,
+            kind: "codebase-edit",
+            family: "mutating",
+            status: "passed",
+            isStale: false,
+            ownsSnapshot: true,
+            snapshotHash: "b3:edit",
+            branchId: strId(ids, "branchId", node?.branchId ?? "main"),
+            parentIds: [nodeId],
+            model: strId(ids, "model", model),
+            cost: { inputTokens: 0, outputTokens: 0, microUsd: numId(ids, "costMicroUsd") },
+            gate: null,
+            // R2: an optimistic Edit node — the authoritative line label/state
+            // arrive on the next graph_view refetch. A fork records its origin.
+            presentationStatus: null,
+            lineLabel: strId(ids, "branchId", node?.branchId ?? "main"),
+            forkedFrom: ids["forked"] === true ? nodeId : null,
+          };
+          attachEditNode(editNode, nodeId);
+          selectNode(editId);
+        }
+      }
+      return;
+    }
+
     const res = await run(
       {
         command: "NODE_AGENT_RUN",
@@ -105,6 +180,10 @@ function AskAgentModal({ node, nodeId }: { node: NodeView | null; nodeId: string
         model: strId(ids, "model", model),
         cost,
         gate: null,
+        // R2: a context node attaches on the current line — never forks.
+        presentationStatus: null,
+        lineLabel: node?.branchId ?? "main",
+        forkedFrom: null,
       };
       attachAgentNode(attached, nodeId);
       setResult({ model: attached.model ?? model, cost });
@@ -115,7 +194,7 @@ function AskAgentModal({ node, nodeId }: { node: NodeView | null; nodeId: string
 
   return (
     <Modal
-      title="Ask the agent"
+      title={isChange ? "Ask the agent to make a change" : "Ask the agent"}
       icon="messages-square"
       onClose={close}
       footer={
@@ -124,16 +203,26 @@ function AskAgentModal({ node, nodeId }: { node: NodeView | null; nodeId: string
             {result ? "Done" : "Cancel"}
           </Button>
           <Button variant="primary" busy={busy} disabled={!prompt.trim()} onClick={() => void ask()}>
-            Ask
+            {isChange ? "Make change" : "Ask"}
           </Button>
         </>
       }
     >
-      <p className="spork-modal-note">
-        A <strong>read-only</strong> run against <code>{shortId(nodeId)}</code>: the
-        answer attaches as an <em>Agent</em> context node by a dotted edge — your
-        code is untouched and no branch is forked (DESIGN §6.6).
-      </p>
+      {isChange ? (
+        <p className="spork-modal-note">
+          A <strong>code-changing</strong> run against <code>{shortId(nodeId)}</code>:
+          the agent edits a <em>copy</em> of your code in an isolated worktree and
+          creates a new <em>Edit</em> node (diff + transcript + auto-Sanity). Your
+          real working directory is never touched; from a non-tip node it auto-forks
+          a branch (DESIGN §6.6, §9.2).
+        </p>
+      ) : (
+        <p className="spork-modal-note">
+          A <strong>read-only</strong> run against <code>{shortId(nodeId)}</code>: the
+          answer attaches as an <em>Agent</em> context node by a dotted edge — your
+          code is untouched and no branch is forked (DESIGN §6.6).
+        </p>
+      )}
       <div className="spork-field">
         <label htmlFor="agent-prompt">Prompt</label>
         <textarea
@@ -165,6 +254,7 @@ function AskAgentModal({ node, nodeId }: { node: NodeView | null; nodeId: string
           <option value="ask">Ask</option>
           <option value="plan">Plan</option>
           <option value="analysis">Analysis</option>
+          <option value="change">Make a change (edits code)</option>
         </select>
       </div>
       <label className="spork-row-between" style={{ cursor: "pointer" }}>
@@ -182,12 +272,21 @@ function AskAgentModal({ node, nodeId }: { node: NodeView | null; nodeId: string
           className="spork-warn-box"
           style={{ background: "var(--bg-raised)", borderColor: "var(--border-strong)", color: "var(--fg)" }}
         >
-          <Icon name="messages-square" size={15} />
-          <span>
-            Answered by <strong>{humanizeModel(result.model)}</strong> ·{" "}
-            {result.cost.inputTokens}↑/{result.cost.outputTokens}↓ tokens ·{" "}
-            {formatMicroUsd(result.cost.microUsd)}.
-          </span>
+          <Icon name={result.edit ? "git-branch" : "messages-square"} size={15} />
+          {result.edit ? (
+            <span>
+              Edit node created on <strong>{result.edit.branchId}</strong>
+              {result.edit.forked ? " (auto-forked)" : ""} ·{" "}
+              {humanizeModel(result.model)} · {formatMicroUsd(result.cost.microUsd)}
+              {result.edit.sanity ? ` · Sanity: ${result.edit.sanity}` : ""}.
+            </span>
+          ) : (
+            <span>
+              Answered by <strong>{humanizeModel(result.model)}</strong> ·{" "}
+              {result.cost.inputTokens}↑/{result.cost.outputTokens}↓ tokens ·{" "}
+              {formatMicroUsd(result.cost.microUsd)}.
+            </span>
+          )}
         </div>
       )}
     </Modal>
@@ -198,63 +297,26 @@ function useClose(): () => void {
   return useUiStore((s) => s.closeModal);
 }
 
-/** New branch — BRANCH_FORK. */
-function NewBranchModal({ node, nodeId }: { node: NodeView | null; nodeId: string }): JSX.Element {
-  const close = useClose();
-  const { run } = useActions();
-  const [name, setName] = useState(`branch/${nodeId.slice(-7)}`);
-  const [busy, setBusy] = useState(false);
-
-  async function create(): Promise<void> {
-    if (!name.trim()) return;
-    setBusy(true);
-    const res = await run(
-      { command: "BRANCH_FORK", fromNodeId: nodeId, name: name.trim() },
-      { nodeId, label: "New branch" },
-    );
-    setBusy(false);
-    if (res) close();
-  }
-
-  return (
-    <Modal
-      title="New branch"
-      icon="git-branch"
-      onClose={close}
-      footer={
-        <>
-          <Button variant="ghost" onClick={close}>Cancel</Button>
-          <Button variant="primary" busy={busy} onClick={() => void create()}>
-            Create branch
-          </Button>
-        </>
-      }
-    >
-      <p className="spork-modal-note">
-        Fork a new line of work from {node ? "this node" : "the node"}{" "}
-        <code>{shortId(nodeId)}</code>. Metadata-only — zero bytes copied.
-      </p>
-      <div className="spork-field">
-        <label htmlFor="branch-name">Name</label>
-        <input
-          id="branch-name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          autoFocus
-          onKeyDown={(e) => e.key === "Enter" && void create()}
-        />
-      </div>
-    </Modal>
-  );
+/** A friendly line label for a destination branch ref (its target's line). */
+function lineLabelForRef(view: NodeView[] | undefined, target: string, fallback: string): string {
+  const n = view?.find((x) => x.id === target);
+  return n?.lineLabel ?? n?.branchId ?? fallback;
 }
 
-/** Merge — BRANCH_MERGE (3-way), optionally through a P7 quality gate. */
+/**
+ * Merge into another **line** — BRANCH_MERGE (3-way), optionally through a P7
+ * quality gate (REALIGNMENT_PLAN §5a). The destination is a line (presented by
+ * its friendly label); branching is automatic, so there is no manual "new line".
+ */
 function MergeModal({ node, nodeId }: { node: NodeView | null; nodeId: string }): JSX.Element {
   const close = useClose();
   const view = useUiStore((s) => s.view);
   const { run } = useActions();
-  const branches = view.refs.filter((r) => r.kind === "Branch");
-  const [into, setInto] = useState(branches[0]?.name ?? "main");
+  // Destination lines are the branch refs, excluding the source node's own line.
+  const destinations = view.refs.filter(
+    (r) => r.kind === "Branch" && (!node || view.nodes.find((n) => n.id === r.target)?.branchId !== node.branchId),
+  );
+  const [into, setInto] = useState(destinations[0]?.name ?? "main");
   const [gated, setGated] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -294,7 +356,7 @@ function MergeModal({ node, nodeId }: { node: NodeView | null; nodeId: string })
 
   return (
     <Modal
-      title="Merge"
+      title="Merge into line"
       icon="git-merge"
       onClose={close}
       footer={
@@ -307,16 +369,18 @@ function MergeModal({ node, nodeId }: { node: NodeView | null; nodeId: string })
       }
     >
       <p className="spork-modal-note">
-        3-way merge from <code>{node?.branchId ?? shortId(nodeId)}</code> into the
-        target branch, using the nearest common ancestor. A clean merge creates a
-        Merge node; conflicts surface for resolution with no half-node.
+        3-way merge from the line of <code>{node?.lineLabel ?? node?.branchId ?? shortId(nodeId)}</code>{" "}
+        into the destination line, using the nearest common ancestor. A clean merge
+        creates a Merge node; conflicts surface for resolution with no half-node.
       </p>
       <div className="spork-field">
-        <label htmlFor="merge-into">Into branch</label>
+        <label htmlFor="merge-into">Destination line</label>
         <select id="merge-into" value={into} onChange={(e) => setInto(e.target.value)}>
-          {branches.length === 0 && <option value="main">main</option>}
-          {branches.map((b) => (
-            <option key={b.name} value={b.name}>{b.name}</option>
+          {destinations.length === 0 && <option value="main">main</option>}
+          {destinations.map((b) => (
+            <option key={b.name} value={b.name}>
+              {lineLabelForRef(view.nodes, b.target, b.name)}
+            </option>
           ))}
         </select>
       </div>

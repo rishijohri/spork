@@ -1,46 +1,33 @@
-// Node-action toolbar metadata + dispatch helpers (UI_UX_DESIGN.md §5.10, §7.1).
+// Node-action toolbar metadata + dispatch helpers (UI_UX_DESIGN.md §5.10, §7.1;
+// REALIGNMENT_PLAN §5a).
 //
-// Spork is a general codebase-editing IDE over a content-addressed work-DAG, so
-// the toolbar's actions operate on the SELECTED node of that DAG. The v1 (🟢)
-// action set is exactly the operations backed by a built IPC command:
+// Spork is the timeline-first layer over a content-addressed work-DAG, so the
+// toolbar acts on the SELECTED node. Branching is **automatic** (fork-on-
+// divergence) — there is no "new branch" verb. The actions are reframed into:
 //
-//   Restore      → NODE_RESTORE   (confirm modal; working-tree + conversation)
-//   Run check ▾  → NODE_RUN_CHECK (Validate / Stress / Sanity submenu)
-//   New Branch   → BRANCH_FORK    (name modal)
-//   Merge…       → BRANCH_MERGE   (from/into modal, 3-way)
-//   Commit       → GIT_EXPORT     (branch modal)
-//   Push         → GIT_PUSH       (remote modal; net.connect-gated)
+//   "+ New node from here ▾"  — create a node from the selection, in two groups:
+//      Agentic: Ask / Plan / Explore / Work  (→ NODE_AGENT_RUN / NODE_AGENT_EDIT)
+//      Action:  Run tests / Stress / Sanity  (→ NODE_RUN_CHECK)
+//               Commit / Push                (→ GIT_EXPORT / GIT_PUSH)
+//   Restore           — NODE_RESTORE (confirm modal; working-tree + conversation)
+//   Merge into line   — BRANCH_MERGE (pick a destination *line tip*, 3-way)
 //
-// The vague View / Analyze / Metadata buttons of the first cut are gone (no
-// backing command; "Metadata" became the Info tab). Each action declares
-// `enabledWhen(node)` for schema-driven gating (§14.5). Most actions OPEN A MODAL
-// (so a name/remote/confirm is collected); the modal does the dispatch via the
-// shared action runner (useActions.ts). Run-check dispatches from a submenu.
+// Each item declares `enabledWhen(node)` for schema-driven gating (§14.5). An
+// agentic item opens the Ask modal pre-set to its intent; an action check item
+// dispatches directly; commit/push open their modals; the modals do the dispatch
+// via the shared action runner (useActions.ts).
 
-import type { Command, CommandResult, NodeView, Ulid } from "../ipc/types";
+import type {
+  AgentRunIntent,
+  Command,
+  CommandResult,
+  NodeView,
+  Ulid,
+} from "../ipc/types";
 import type { ActivityLevel } from "../state/store";
 import type { IconName } from "../ui/icons";
 import type { ButtonVariant } from "../ui/Button";
 import { shortId } from "../ui/format";
-
-/** The v1 node-action ids. */
-export type ToolbarActionId =
-  | "restore"
-  | "runCheck"
-  | "newBranch"
-  | "merge"
-  | "commit"
-  | "push";
-
-/** A node-action's display + gating metadata. */
-export interface ToolbarAction {
-  id: ToolbarActionId;
-  label: string;
-  icon: IconName;
-  variant?: ButtonVariant;
-  /** Whether the action is enabled for the given selection (null = none). */
-  enabledWhen: (node: NodeView | null) => boolean;
-}
 
 /** True iff a node exists and owns a restorable snapshot. */
 export function isMaterializable(node: NodeView | null): node is NodeView {
@@ -52,8 +39,20 @@ export function hasSelection(node: NodeView | null): node is NodeView {
   return node !== null;
 }
 
-/** The frozen v1 node-action set, in display order. */
-export const TOOLBAR_ACTIONS: readonly ToolbarAction[] = [
+/** A direct node-operation on the selection (not a node-creation). */
+export type NodeOpId = "restore" | "merge";
+
+/** A node-op's display + gating metadata. */
+export interface NodeOp {
+  id: NodeOpId;
+  label: string;
+  icon: IconName;
+  variant?: ButtonVariant;
+  enabledWhen: (node: NodeView | null) => boolean;
+}
+
+/** The direct node-ops, in display order (alongside the "+ New node" menu). */
+export const NODE_OPS: readonly NodeOp[] = [
   {
     id: "restore",
     label: "Restore",
@@ -62,49 +61,131 @@ export const TOOLBAR_ACTIONS: readonly ToolbarAction[] = [
     enabledWhen: (n) => isMaterializable(n) && n.family === "mutating",
   },
   {
-    id: "runCheck",
-    label: "Run check",
-    icon: "play",
-    enabledWhen: isMaterializable,
-  },
-  {
-    id: "newBranch",
-    label: "Branch",
-    icon: "git-branch",
-    enabledWhen: hasSelection,
-  },
-  {
     id: "merge",
-    label: "Merge",
+    label: "Merge into line",
     icon: "git-merge",
     enabledWhen: hasSelection,
   },
+];
+
+/** What a "+ New node from here" item dispatches when chosen. */
+export type NewNodeDispatch =
+  /** Open the Ask modal pre-set to an agentic intent (ask/plan/analysis/change). */
+  | { type: "askAgent"; intent: AgentRunIntent }
+  /** Dispatch a deterministic check directly (validation/stress/sanity). */
+  | { type: "check"; checkKind: string }
+  /** Open a git action modal (commit/push). */
+  | { type: "modal"; modal: "commit" | "push" };
+
+/** One item in the "+ New node from here" menu. */
+export interface NewNodeItem {
+  id: string;
+  label: string;
+  icon: IconName;
+  /** A one-line description shown under the item. */
+  help: string;
+  dispatch: NewNodeDispatch;
+  enabledWhen: (node: NodeView | null) => boolean;
+}
+
+/** A titled group of new-node items (Agentic / Action). */
+export interface NewNodeGroup {
+  label: string;
+  items: readonly NewNodeItem[];
+}
+
+/** The "+ New node from here" menu: the agentic + deterministic-action families. */
+export const NEW_NODE_GROUPS: readonly NewNodeGroup[] = [
   {
-    id: "commit",
-    label: "Commit",
-    icon: "git-commit",
-    enabledWhen: isMaterializable,
+    label: "Agentic",
+    items: [
+      {
+        id: "ask",
+        label: "Ask",
+        icon: "messages-square",
+        help: "Ask a question about this node",
+        dispatch: { type: "askAgent", intent: "ask" },
+        enabledWhen: hasSelection,
+      },
+      {
+        id: "plan",
+        label: "Plan",
+        icon: "list",
+        help: "Plan a change — nothing is edited",
+        dispatch: { type: "askAgent", intent: "plan" },
+        enabledWhen: hasSelection,
+      },
+      {
+        id: "explore",
+        label: "Explore",
+        icon: "search",
+        help: "Analyze, review, or summarize",
+        dispatch: { type: "askAgent", intent: "analysis" },
+        enabledWhen: hasSelection,
+      },
+      {
+        id: "work",
+        label: "Work",
+        icon: "pencil",
+        help: "Make a change — creates an Edit node (auto-forks)",
+        dispatch: { type: "askAgent", intent: "change" },
+        enabledWhen: isMaterializable,
+      },
+    ],
   },
   {
-    id: "push",
-    label: "Push",
-    icon: "upload",
-    variant: "danger",
-    enabledWhen: isMaterializable,
+    label: "Action",
+    items: [
+      {
+        id: "run-tests",
+        label: "Run tests",
+        icon: "check-circle",
+        help: "Run the validation suite",
+        dispatch: { type: "check", checkKind: "validation" },
+        enabledWhen: isMaterializable,
+      },
+      {
+        id: "stress",
+        label: "Stress",
+        icon: "activity",
+        help: "Run a stress check",
+        dispatch: { type: "check", checkKind: "stress" },
+        enabledWhen: isMaterializable,
+      },
+      {
+        id: "sanity",
+        label: "Sanity",
+        icon: "shield-check",
+        help: "Run a sanity check",
+        dispatch: { type: "check", checkKind: "sanity" },
+        enabledWhen: isMaterializable,
+      },
+      {
+        id: "commit",
+        label: "Commit",
+        icon: "git-commit",
+        help: "Commit this node's state to git",
+        dispatch: { type: "modal", modal: "commit" },
+        enabledWhen: isMaterializable,
+      },
+      {
+        id: "push",
+        label: "Push",
+        icon: "upload",
+        help: "Push a line to a remote",
+        dispatch: { type: "modal", modal: "push" },
+        enabledWhen: isMaterializable,
+      },
+    ],
   },
 ];
 
-/** The check kinds the Run-check submenu offers (all P5 runners). */
+/** The check kinds (kept for the command palette / external callers). */
 export const CHECK_KINDS = [
   { kind: "validation", label: "Validate" },
   { kind: "stress", label: "Stress" },
   { kind: "sanity", label: "Sanity" },
 ] as const;
-
-/** Look up an action by id. */
-export function toolbarActionById(id: string): ToolbarAction | undefined {
-  return TOOLBAR_ACTIONS.find((a) => a.id === id);
-}
 
 /** The check kind a NODE_RUN_CHECK spec carries (opaque `unknown` on the command). */
 function checkKind(spec: unknown): string {
@@ -142,7 +223,7 @@ export function activityLineFor(
           }
         : null;
     case "BRANCH_FORK":
-      return { level: "success", text: `Created branch ${command.name}` };
+      return { level: "success", text: `Started a new line ${command.name}` };
     case "NODE_RESTORE":
       return { level: "success", text: `Restored ${id} (code + conversation)` };
     case "NODE_RUN_CHECK":
@@ -151,7 +232,7 @@ export function activityLineFor(
         text: `Queued ${checkKind(command.spec)} check on ${id}`,
       };
     case "BRANCH_MERGE":
-      return { level: "success", text: `Merged into ${command.intoRef}` };
+      return { level: "success", text: `Merged into line ${command.intoRef}` };
     case "REF_CREATE":
       return { level: "success", text: `Created ref ${command.name}` };
     case "REF_MOVE":
@@ -178,6 +259,13 @@ export function activityLineFor(
       const cost = micro <= 0 ? "free" : `$${(micro / 1_000_000).toFixed(4)}`;
       return { level: "success", text: `Asked agent on ${id} via ${model} · ${cost}` };
     }
+    case "NODE_AGENT_EDIT": {
+      if (res.result !== "MUTATION") return null;
+      const line =
+        typeof res.ids["branchId"] === "string" ? (res.ids["branchId"] as string) : "main";
+      const forked = res.ids["forked"] === true ? " (new line)" : "";
+      return { level: "success", text: `Agent edited ${id} → ${line}${forked}` };
+    }
     default:
       return res.result === "MUTATION"
         ? { level: "success", text: "Done" }
@@ -185,9 +273,10 @@ export function activityLineFor(
   }
 }
 
-/** The minted subject id (nodeId/refId) from a MUTATION reply, for reconciliation. */
+/** The minted subject id (nodeId/refId/editNodeId) from a MUTATION reply. */
 export function mintedSubjectId(ids: Record<string, unknown>): Ulid | null {
   if (typeof ids["nodeId"] === "string") return ids["nodeId"] as Ulid;
+  if (typeof ids["editNodeId"] === "string") return ids["editNodeId"] as Ulid;
   if (typeof ids["refId"] === "string") return ids["refId"] as Ulid;
   return null;
 }
@@ -206,6 +295,7 @@ export function capabilityForCommand(command: Command): string {
     case "NODE_RUN_CHECK":
       return "process.spawn";
     case "NODE_AGENT_RUN":
+    case "NODE_AGENT_EDIT":
       return "model.invoke";
     default:
       return "capability";

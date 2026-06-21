@@ -2,12 +2,16 @@
 // Tauri is globally mocked; ResizeObserver is polyfilled (src/test/setup.ts).
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Canvas, toRfNodes, toRfEdges } from "./Canvas";
 import { useUiStore } from "../state/store";
 import { descriptorFor } from "./descriptors";
+import {
+  getDispatchedCommands,
+  getOpenedProjects,
+} from "../ipc/mock";
 import type { GraphView, NodeView } from "../ipc/types";
 
 const A = "00000000000000000000000001";
@@ -25,6 +29,9 @@ function node(over: Partial<NodeView> & Pick<NodeView, "id" | "kind">): NodeView
     model: null,
     cost: null,
     gate: null,
+    presentationStatus: null,
+    lineLabel: "main",
+    forkedFrom: null,
     ...over,
   };
 }
@@ -67,40 +74,51 @@ function renderCanvas() {
 }
 
 describe("toRfNodes", () => {
-  it("maps each node to a sporkCard with node + descriptor in data", () => {
+  it("maps each node to a sporkCard with node + descriptor in data, plus lane bands", () => {
     const v = twoNodeView();
-    const rf = toRfNodes(v, null, [], "");
-    expect(rf).toHaveLength(2);
+    const { rfNodes, lanes } = toRfNodes(v, null, [], "", null);
+    expect(rfNodes).toHaveLength(2);
+    // Both demo nodes are on `main`, so there is one swimlane.
+    expect(lanes).toHaveLength(1);
+    expect(lanes[0]?.branchId).toBe("main");
 
-    const a = rf.find((n) => n.id === A);
+    const a = rfNodes.find((n) => n.id === A);
     expect(a?.type).toBe("sporkCard");
     expect(a?.data.node.id).toBe(A);
     expect(a?.data.descriptor).toEqual(descriptorFor("codebase-edit"));
   });
 
   it("marks only the selected node as selected", () => {
-    const rf = toRfNodes(twoNodeView(), A, [], "");
-    expect(rf.find((n) => n.id === A)?.data.selected).toBe(true);
-    expect(rf.find((n) => n.id === B)?.data.selected).toBe(false);
+    const { rfNodes } = toRfNodes(twoNodeView(), A, [], "", null);
+    expect(rfNodes.find((n) => n.id === A)?.data.selected).toBe(true);
+    expect(rfNodes.find((n) => n.id === B)?.data.selected).toBe(false);
   });
 
   it("dims nodes whose kind is excluded by a non-empty kind filter", () => {
-    const rf = toRfNodes(twoNodeView(), null, ["codebase-edit"], "");
+    const { rfNodes } = toRfNodes(twoNodeView(), null, ["codebase-edit"], "", null);
     // A's kind is in the filter (highlighted), B's is not (dimmed).
-    expect(rf.find((n) => n.id === A)?.data.dimmed).toBe(false);
-    expect(rf.find((n) => n.id === B)?.data.dimmed).toBe(true);
+    expect(rfNodes.find((n) => n.id === A)?.data.dimmed).toBe(false);
+    expect(rfNodes.find((n) => n.id === B)?.data.dimmed).toBe(true);
   });
 
   it("does not dim anything when the kind filter is empty", () => {
-    const rf = toRfNodes(twoNodeView(), null, [], "");
-    expect(rf.every((n) => n.data.dimmed === false)).toBe(true);
+    const { rfNodes } = toRfNodes(twoNodeView(), null, [], "", null);
+    expect(rfNodes.every((n) => n.data.dimmed === false)).toBe(true);
   });
 
   it("dims nodes that do not match the free-text search", () => {
     // "validation" matches B's kind/label but not A.
-    const rf = toRfNodes(twoNodeView(), null, [], "validation");
-    expect(rf.find((n) => n.id === A)?.data.dimmed).toBe(true);
-    expect(rf.find((n) => n.id === B)?.data.dimmed).toBe(false);
+    const { rfNodes } = toRfNodes(twoNodeView(), null, [], "validation", null);
+    expect(rfNodes.find((n) => n.id === A)?.data.dimmed).toBe(true);
+    expect(rfNodes.find((n) => n.id === B)?.data.dimmed).toBe(false);
+  });
+
+  it("dims nodes not on the focused lane (REALIGNMENT_PLAN §5a)", () => {
+    // Focusing a non-existent lane dims everything; focusing `main` dims nothing.
+    const dimmed = toRfNodes(twoNodeView(), null, [], "", "other");
+    expect(dimmed.rfNodes.every((n) => n.data.dimmed === true)).toBe(true);
+    const onMain = toRfNodes(twoNodeView(), null, [], "", "main");
+    expect(onMain.rfNodes.every((n) => n.data.dimmed === false)).toBe(true);
   });
 });
 
@@ -152,5 +170,44 @@ describe("Canvas (live render)", () => {
 
     expect(screen.getByTestId("canvas-empty")).toBeInTheDocument();
     expect(screen.queryByTestId("node-card")).toBeNull();
+  });
+
+  it("shows a loading spinner (not the picker) while a project is opening (P7.5)", () => {
+    act(() => {
+      useUiStore.getState().setView(emptyView);
+      useUiStore.getState().setProjectOpening(true);
+    });
+    renderCanvas();
+
+    // A reopened/just-opened project must NOT flash the onboarding picker.
+    expect(screen.getByTestId("canvas-opening")).toBeInTheDocument();
+    expect(screen.queryByTestId("canvas-empty")).toBeNull();
+  });
+
+  it("opens a project and imports it into a root node (P7.5 W1)", async () => {
+    act(() => {
+      useUiStore.getState().setView(emptyView);
+    });
+    renderCanvas();
+
+    fireEvent.change(screen.getByLabelText("Project path"), {
+      target: { value: "/my/repo" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Open project/i }));
+
+    // The empty state drives the real open_project → PROJECT_IMPORT flow: the
+    // daemon captures the working tree into the first node (the unblocker).
+    await waitFor(() => {
+      expect(getOpenedProjects()).toContain("/my/repo");
+    });
+    const imports = getDispatchedCommands().filter(
+      (c) => c.command === "PROJECT_IMPORT",
+    );
+    expect(imports).toHaveLength(1);
+    expect(imports[0]).toMatchObject({
+      command: "PROJECT_IMPORT",
+      branchId: "main",
+      origin: "import",
+    });
   });
 });

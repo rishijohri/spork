@@ -71,3 +71,74 @@ export function effectiveStatus(
 ): EffectiveStatus {
   return { status, stale: isStale, label: status };
 }
+
+/**
+ * Map a rich per-type **presentation status** (REALIGNMENT_PLAN §3b) onto the
+ * `data-status` styling tone the card already styles by, so an agentic state
+ * reuses the existing status-dot palette. Total over the documented agentic +
+ * action states; an unknown token degrades to the neutral `pending` tone.
+ */
+export function presentationTone(presentation: string): Lifecycle {
+  switch (presentation) {
+    case "complete":
+    case "pass":
+      return "passed";
+    case "thinking":
+    case "working":
+    case "running":
+      return "running";
+    case "awaiting_input":
+    case "pending":
+      return "pending";
+    case "require_review":
+    case "require_more_info":
+      return "blocked";
+    case "cancelled":
+      return "cancelled";
+    case "errored":
+    case "failed":
+      return "failed";
+    default:
+      return "pending";
+  }
+}
+
+/** Humanize a snake_case presentation status into a readable label. */
+export function humanizePresentation(presentation: string): string {
+  return presentation.replace(/_/g, " ");
+}
+
+/** The per-type **state badge** rendered on a card/header. */
+export interface StatusBadge {
+  /** The `data-status` styling key (a Lifecycle token reused for the dot color). */
+  tone: Lifecycle;
+  /** The human label shown in the badge. */
+  label: string;
+  /** Whether the node is stale (amber ring + "stale" tag). */
+  stale: boolean;
+  /** Whether the label came from a rich presentation status (vs the lifecycle). */
+  fromPresentation: boolean;
+}
+
+/**
+ * The per-type **state badge** for a node (REALIGNMENT_PLAN §3b): prefer the
+ * rich `presentationStatus` an agentic node emits (the badge flips live when the
+ * R3 producer lands), else fall back to the effective lifecycle. Either way the
+ * `tone` keys the existing card styling, so no new status palette is needed.
+ */
+export function statusBadge(node: {
+  status: Lifecycle;
+  isStale: boolean;
+  presentationStatus: string | null;
+}): StatusBadge {
+  if (node.presentationStatus) {
+    return {
+      tone: presentationTone(node.presentationStatus),
+      label: humanizePresentation(node.presentationStatus),
+      stale: node.isStale,
+      fromPresentation: true,
+    };
+  }
+  const eff = effectiveStatus(node.status, node.isStale);
+  return { tone: eff.status, label: eff.label, stale: eff.stale, fromPresentation: false };
+}

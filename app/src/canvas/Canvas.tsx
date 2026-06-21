@@ -16,6 +16,7 @@ import {
   Background,
   BackgroundVariant,
   MiniMap,
+  ViewportPortal,
   useReactFlow,
   type Node as RfNode,
   type Edge as RfEdge,
@@ -25,19 +26,20 @@ import {
 import "@xyflow/react/dist/style.css";
 import { useUiStore } from "../state/store";
 import { descriptorFor, type NodeTypeDescriptor } from "./descriptors";
-import { fallbackLayout } from "./layout";
+import { laneLayout, type LaneBand } from "./layout";
+import { deriveLines } from "../state/lines";
 import { NodeCard, type NodeCardData } from "./NodeCard";
 import { Icon } from "../ui/icons";
 import { IconButton } from "../ui/Button";
 import { humanizeEdge } from "../ui/format";
-import { openProject } from "../ipc/client";
-import { GRAPH_VIEW_KEY } from "../state/queries";
+import { pickProjectDir, isTauri } from "../ipc/client";
+import { openAndImport, rememberProject } from "../app/onboarding";
 import { useQueryClient } from "@tanstack/react-query";
 import type { GraphView, NodeView } from "../ipc/types";
 
 const NODE_TYPES: NodeTypes = { sporkCard: NodeCard };
 
-/** Whether a node matches the free-text canvas search (kind/label/id/branch/model). */
+/** Whether a node matches the free-text canvas search (kind/label/id/line/model). */
 function matchesSearch(
   node: NodeView,
   descriptor: NodeTypeDescriptor,
@@ -48,7 +50,7 @@ function matchesSearch(
     node.kind,
     descriptor.label,
     node.id,
-    node.branchId,
+    node.lineLabel ?? node.branchId,
     node.model ?? "",
   ]
     .join(" ")
@@ -56,20 +58,23 @@ function matchesSearch(
   return hay.includes(q.toLowerCase());
 }
 
-/** Map the view-model into React Flow nodes (custom cards, positioned, dimmed). */
+/** Map the view-model into React Flow nodes — swimlane-positioned + the lane bands. */
 export function toRfNodes(
   view: GraphView,
   selectedId: string | null,
   kindFilter: readonly string[],
   search: string,
-): RfNode<NodeCardData>[] {
-  const positions = new Map(fallbackLayout(view.nodes).map((p) => [p.id, p]));
-  return view.nodes.map((n) => {
+  focusedLane: string | null,
+): { rfNodes: RfNode<NodeCardData>[]; lanes: LaneBand[]; width: number } {
+  const lines = deriveLines(view);
+  const { positions, lanes, width } = laneLayout(view.nodes, lines);
+  const posById = new Map(positions.map((p) => [p.id, p]));
+  const rfNodes = view.nodes.map((n) => {
     const descriptor = descriptorFor(n.kind);
-    const pos = positions.get(n.id) ?? { x: 0, y: 0 };
-    const filteredOut =
-      kindFilter.length > 0 && !kindFilter.includes(n.kind);
+    const pos = posById.get(n.id) ?? { x: 0, y: 0 };
+    const filteredOut = kindFilter.length > 0 && !kindFilter.includes(n.kind);
     const searchedOut = !matchesSearch(n, descriptor, search);
+    const laneDimmed = focusedLane !== null && n.branchId !== focusedLane;
     return {
       id: n.id,
       type: "sporkCard",
@@ -78,12 +83,13 @@ export function toRfNodes(
         node: n,
         descriptor,
         selected: n.id === selectedId,
-        dimmed: filteredOut || searchedOut,
+        dimmed: filteredOut || searchedOut || laneDimmed,
       },
       // a stable className for tests/inspection
       className: `spork-node spork-node-${n.kind}`,
     } satisfies RfNode<NodeCardData>;
   });
+  return { rfNodes, lanes, width };
 }
 
 /** Map the view-model edges into React Flow edges (humanized + color-coded). */
@@ -109,10 +115,13 @@ export function Canvas(): JSX.Element {
   const setCanvasSearch = useUiStore((s) => s.setCanvasSearch);
   const openContextMenu = useUiStore((s) => s.openContextMenu);
   const closeContextMenu = useUiStore((s) => s.closeContextMenu);
+  const projectOpening = useUiStore((s) => s.projectOpening);
+  const focusedLane = useUiStore((s) => s.focusedLane);
+  const focusLane = useUiStore((s) => s.focusLane);
 
-  const nodes = useMemo(
-    () => toRfNodes(view, selectedNodeId, kindFilter, canvasSearch),
-    [view, selectedNodeId, kindFilter, canvasSearch],
+  const { rfNodes, lanes, width } = useMemo(
+    () => toRfNodes(view, selectedNodeId, kindFilter, canvasSearch, focusedLane),
+    [view, selectedNodeId, kindFilter, canvasSearch, focusedLane],
   );
   const edges = useMemo(() => toRfEdges(view), [view]);
 
@@ -131,7 +140,10 @@ export function Canvas(): JSX.Element {
   );
 
   if (view.nodes.length === 0) {
-    return <EmptyCanvas />;
+    // While a project is opening/importing, show a spinner — not the onboarding
+    // picker — so a reopened/just-opened project doesn't flash the empty state
+    // (and the user can't accidentally re-open mid-flight).
+    return projectOpening ? <OpeningCanvas /> : <EmptyCanvas />;
   }
 
   return (
@@ -150,7 +162,7 @@ export function Canvas(): JSX.Element {
         </div>
       </div>
       <ReactFlow
-        nodes={nodes}
+        nodes={rfNodes}
         edges={edges}
         nodeTypes={NODE_TYPES}
         onNodeClick={onNodeClick}
@@ -164,6 +176,38 @@ export function Canvas(): JSX.Element {
         proOptions={{ hideAttribution: true }}
       >
         <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#1f2735" />
+        {/* Swimlane bands — one per emergent line, drawn behind the nodes in flow
+            coordinates so they pan/zoom with the graph (REALIGNMENT_PLAN §5a). */}
+        <ViewportPortal>
+          <div className="spork-lanes-layer" aria-hidden="true">
+            {lanes.map((lane) => {
+              const focused = focusedLane === lane.branchId;
+              const dim = focusedLane !== null && !focused;
+              return (
+                <div
+                  key={lane.branchId}
+                  className={`spork-lane-band${focused ? " spork-lane-band--focused" : ""}${dim ? " spork-lane-band--dim" : ""}`}
+                  data-lane-index={lane.index % 2}
+                  style={{
+                    position: "absolute",
+                    transform: `translate(-40px, ${lane.yTop}px)`,
+                    width: width + 40,
+                    height: lane.height,
+                  }}
+                >
+                  <button
+                    className="spork-lane-gutter"
+                    onClick={() => focusLane(focused ? null : lane.branchId)}
+                    title={`Focus the ${lane.label} line`}
+                  >
+                    {lane.forkedFrom && <span className="spork-lane-fork" aria-hidden="true">↳</span>}
+                    {lane.label}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </ViewportPortal>
         <CanvasControls />
       </ReactFlow>
     </div>
@@ -205,26 +249,88 @@ function CanvasControls(): JSX.Element {
 }
 
 /**
- * Honest empty state (§5.4, adjusted for what's actually possible): a project's
- * nodes are produced by the daemon (drift capture as you edit, agent runs), not
- * fabricated by the renderer — creating a root snapshot needs a real content hash
- * the UI cannot mint. So the empty state explains that and offers to open a
- * project (the real, backed `open_project` path), rather than a dead "New node".
+ * The onboarding empty state (§5.4, P7.5 MVP W1/W2): point Spork at an existing
+ * repo and it captures the working tree into a **root snapshot node** so the
+ * project renders on the canvas. The daemon roots at the real project dir and
+ * keeps its own state under a hidden `.spork/` (git-ignored); the renderer drives
+ * the real, backed `open_project` → `PROJECT_IMPORT` path (it no longer needs to
+ * mint a content hash — the daemon captures the tree itself).
  */
+/** A neutral spinner shown while a project is opening/importing (not the picker). */
+function OpeningCanvas(): JSX.Element {
+  return (
+    <div className="spork-canvas-wrap" data-testid="canvas-opening">
+      <div className="spork-empty">
+        <div className="spork-empty-icon">
+          <Icon name="loader" size={22} />
+        </div>
+        <h3>Opening project…</h3>
+        <p className="spork-muted" style={{ maxWidth: 340 }}>
+          Capturing your code into the graph. This can take a moment on a large
+          repo.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function EmptyCanvas(): JSX.Element {
   const qc = useQueryClient();
   const logActivity = useUiStore((s) => s.logActivity);
+  const setProjectOpening = useUiStore((s) => s.setProjectOpening);
   const [path, setPath] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const native = isTauri();
 
-  async function open(): Promise<void> {
-    const p = path.trim();
-    if (!p) return;
+  /** Onboard a project dir: open the daemon over it, then capture the first node. */
+  async function onboard(p: string): Promise<void> {
+    const dir = p.trim();
+    if (!dir || busy) return;
+    setBusy(true);
+    setError(null);
+    setProjectOpening(true);
     try {
-      await openProject(p);
-      await qc.invalidateQueries({ queryKey: GRAPH_VIEW_KEY });
-      logActivity("success", `Opened project ${p}`);
+      const nodeId = await openAndImport(dir, qc);
+      rememberProject(dir);
+      logActivity(
+        "success",
+        nodeId ? `Opened ${dir} — root node ${nodeId}` : `Opened project ${dir}`,
+      );
     } catch (err) {
-      logActivity("error", `Open failed: ${err instanceof Error ? err.message : String(err)}`);
+      const message = err instanceof Error ? err.message : String(err);
+      // Surface the failure BOTH inline (always visible) and in the activity log.
+      setError(`Open failed: ${message}`);
+      logActivity("error", `Open failed: ${message}`);
+    } finally {
+      setBusy(false);
+      setProjectOpening(false);
+    }
+  }
+
+  /** Open the native folder picker, then onboard the chosen dir. */
+  async function browse(): Promise<void> {
+    if (busy) return;
+    setError(null);
+    try {
+      const dir = await pickProjectDir();
+      if (dir) {
+        setPath(dir);
+        await onboard(dir);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(`Folder picker failed: ${message}`);
+      logActivity("error", `Folder picker failed: ${message}`);
+    }
+  }
+
+  /** Primary action: in the desktop app, open the picker; else use the typed path. */
+  async function primary(): Promise<void> {
+    if (native && !path.trim()) {
+      await browse();
+    } else {
+      await onboard(path);
     }
   }
 
@@ -232,29 +338,52 @@ function EmptyCanvas(): JSX.Element {
     <div className="spork-canvas-wrap" data-testid="canvas-empty">
       <div className="spork-empty">
         <div className="spork-empty-icon">
-          <Icon name="git-branch" size={22} />
+          <Icon name="folder" size={22} />
         </div>
-        <h3>No work yet</h3>
-        <p className="spork-muted" style={{ maxWidth: 340 }}>
-          Spork captures work as a graph — nodes appear as the daemon records your
-          edits (drift capture) and agent runs. Open a project to begin.
+        <h3>Open a project</h3>
+        <p className="spork-muted" style={{ maxWidth: 360 }}>
+          Point Spork at any folder (an existing repo or an empty dir) and it
+          captures your code as a root node on the graph. Spork keeps its own state
+          in a hidden <code>.spork/</code> folder inside the project (git-ignored,
+          never committed).
         </p>
         <div className="spork-empty-actions">
           <input
             type="text"
             value={path}
             onChange={(e) => setPath(e.target.value)}
-            placeholder="/path/to/project"
+            placeholder={native ? "Choose a folder, or type a path…" : "/path/to/project"}
             aria-label="Project path"
-            style={{ width: 220 }}
+            disabled={busy}
+            style={{ width: 240 }}
             onKeyDown={(e) => {
-              if (e.key === "Enter") void open();
+              if (e.key === "Enter") void primary();
             }}
           />
-          <button className="btn btn--primary" onClick={() => void open()}>
-            <Icon name="download" size={14} /> Open project
+          {native && (
+            <button
+              className="btn"
+              onClick={() => void browse()}
+              disabled={busy}
+              aria-label="Browse for a folder"
+            >
+              <Icon name="folder" size={14} /> Browse…
+            </button>
+          )}
+          <button
+            className="btn btn--primary"
+            onClick={() => void primary()}
+            disabled={busy}
+          >
+            <Icon name="download" size={14} />{" "}
+            {busy ? "Importing…" : "Open project"}
           </button>
         </div>
+        {error && (
+          <p className="spork-error" role="alert" style={{ maxWidth: 360 }}>
+            {error}
+          </p>
+        )}
       </div>
     </div>
   );

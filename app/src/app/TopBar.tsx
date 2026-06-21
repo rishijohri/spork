@@ -1,9 +1,10 @@
-// Top bar (UI_UX_DESIGN.md §5.1, §4).
+// Top bar (UI_UX_DESIGN.md §5.1, §4; REALIGNMENT_PLAN §5a).
 //
-// Zoned: brand + project + branch switcher · undo/redo · search/⌘K · the SINGLE
-// node-action toolbar (gated) · default-model selector · settings · daemon status
-// dot. The model selector sets the default for NEW nodes only (real per-node
-// multi-provider routing is P6). Branch/model use lightweight dropdowns.
+// Zoned: brand + project + an informational **line breadcrumb** (NOT a branch
+// switcher — lines are emergent, never managed) · a canvas ⇄ chat view toggle ·
+// undo/redo · search/⌘K · the SINGLE node-action toolbar (gated) · default-model
+// selector · settings · daemon status dot. The model selector sets the default
+// for NEW nodes only.
 
 import { useState, type JSX } from "react";
 import { useUiStore } from "../state/store";
@@ -13,20 +14,40 @@ import { Button, IconButton } from "../ui/Button";
 import { Icon } from "../ui/icons";
 import { SettingsPopover } from "./overlays/SettingsPopover";
 import { humanizeModel } from "../ui/format";
+import { lineOfNode } from "../state/lines";
 import type { NodeView } from "../ipc/types";
+import type { AgentProvider } from "../state/store";
 
 /**
  * Model choices, as `provider/model` selector keys (P6 multi-provider routing).
  * The selector sets the default an agent run uses; the router resolves the key to
- * a provider (privacy enforced) and prices the turn. Local + CLI run offline.
+ * a provider (privacy enforced) and prices the turn. `local/*` runs offline.
+ *
+ * The generic CLI-as-model route is deprecated (REALIGNMENT_PLAN.md §2), so no
+ * `cli/*` key is advertised here; a configured *conforming* CLI agent still
+ * surfaces a single `cli/<command>` key via {@link availableModels}.
  */
 export const MODELS = [
   "anthropic/claude-opus-4-8",
   "anthropic/claude-sonnet-4-6",
   "openai/gpt-4o",
   "local/llama3.1",
-  "cli/copilot-cli",
 ] as const;
+
+/**
+ * The model selector keys that are actually **backed** for the configured
+ * provider (P7.5 MVP, W3). The daemon default (null) is the local OpenAI-compatible
+ * endpoint, so `local/*` keys are offered; a CLI config offers a single
+ * `cli/<command>` key for the configured agent. First-party cloud providers are
+ * deferred (no TLS transport yet — docs/MVP_PLAN.md §3), so they are never
+ * offered — closing the "UI advertises an unbacked provider" honesty gap.
+ */
+export function availableModels(provider: AgentProvider | null): string[] {
+  if (provider?.kind === "cli") {
+    return [`cli/${provider.command?.trim() || "agent"}`];
+  }
+  return MODELS.filter((m) => m.startsWith("local/"));
+}
 
 const CONN_LABEL: Record<string, string> = {
   connected: "Daemon connected",
@@ -53,78 +74,62 @@ export function TopBar(): JSX.Element {
   const selectedId = useUiStore((s) => s.selectedNodeId);
   const defaultModel = useUiStore((s) => s.defaultModel);
   const setDefaultModel = useUiStore((s) => s.setDefaultModel);
-  const selectNode = useUiStore((s) => s.selectNode);
+  const agentProvider = useUiStore((s) => s.agentProvider);
   const setPaletteOpen = useUiStore((s) => s.setPaletteOpen);
   const settingsOpen = useUiStore((s) => s.settingsOpen);
   const setSettingsOpen = useUiStore((s) => s.setSettingsOpen);
   const connection = useUiStore((s) => s.connection);
+  const centerView = useUiStore((s) => s.centerView);
+  const setCenterView = useUiStore((s) => s.setCenterView);
   const { run } = useActions();
 
-  const [branchMenu, setBranchMenu] = useState(false);
   const [modelMenu, setModelMenu] = useState(false);
 
   const node: NodeView | null =
     (selectedId && view.nodes.find((n) => n.id === selectedId)) || null;
 
+  // The current line is the selected node's line, else the HEAD's line, else main.
   const headTarget = view.refs.find((r) => r.name === "HEAD")?.target ?? null;
-  const branches = view.refs.filter((r) => r.kind === "Branch");
-  const currentBranch =
-    branches.find((b) => b.target === headTarget)?.name ?? "main";
+  const currentLine =
+    (selectedId && lineOfNode(view, selectedId)) ||
+    (headTarget && lineOfNode(view, headTarget)) ||
+    null;
+  const lineLabel = currentLine?.label ?? "main line";
 
   return (
     <header className="spork-topbar" aria-label="Top bar">
-      {/* zone A: identity + branch */}
+      {/* zone A: identity + the (informational) line breadcrumb */}
       <span className="spork-brand">
         <span className="spork-brand-mark" aria-hidden="true" />
         spork
       </span>
       <span className="spork-project">spork</span>
-      <div style={{ position: "relative" }}>
-        <Button
-          className="spork-branch-btn"
-          size="sm"
-          variant="ghost"
-          icon="git-branch"
-          aria-haspopup="menu"
-          aria-expanded={branchMenu}
-          onClick={() => setBranchMenu((v) => !v)}
+      <span
+        className="spork-line-crumb"
+        title="The current line — an emergent line of work, not a git branch you switch"
+      >
+        <Icon name="git-commit" size={13} />
+        <span className="spork-line-name">{lineLabel}</span>
+      </span>
+
+      <div className="spork-topbar-sep" />
+
+      {/* zone A2: canvas ⇄ chat — two views of the same node substrate */}
+      <div className="spork-seg spork-viewtoggle" role="group" aria-label="Center view">
+        <button
+          aria-pressed={centerView === "canvas"}
+          onClick={() => setCenterView("canvas")}
+          title="Timeline canvas"
         >
-          <span className="spork-branch-name">{currentBranch}</span>
-          <Icon name="chevron-down" size={12} />
-        </Button>
-        {branchMenu && (
-          <>
-            <Backdrop onClose={() => setBranchMenu(false)} />
-            <div
-              className="spork-ctxmenu"
-              role="menu"
-              style={{ position: "absolute", top: "100%", left: 0, marginTop: 4, zIndex: 31 }}
-            >
-              {branches.length === 0 && (
-                <span className="spork-ctx-item" aria-disabled>
-                  No branches
-                </span>
-              )}
-              {branches.map((b) => (
-                <button
-                  key={b.name}
-                  className="spork-ctx-item"
-                  role="menuitem"
-                  onClick={() => {
-                    selectNode(b.target);
-                    setBranchMenu(false);
-                  }}
-                >
-                  <Icon name="git-branch" size={13} />
-                  {b.name}
-                  {b.target === headTarget && (
-                    <span className="spork-ctx-shortcut">HEAD</span>
-                  )}
-                </button>
-              ))}
-            </div>
-          </>
-        )}
+          <Icon name="git-branch" size={13} /> Canvas
+        </button>
+        <button
+          aria-pressed={centerView === "chat"}
+          onClick={() => setCenterView("chat")}
+          title="Hero chat"
+        >
+          <Icon name="messages-square" size={13} /> Chat
+        </button>
       </div>
 
       <div className="spork-topbar-sep" />
@@ -187,7 +192,7 @@ export function TopBar(): JSX.Element {
               <span className="spork-ctx-item spork-faint" aria-disabled style={{ fontSize: 11 }}>
                 Default for new nodes
               </span>
-              {MODELS.map((m) => (
+              {availableModels(agentProvider).map((m) => (
                 <button
                   key={m}
                   className="spork-ctx-item"
@@ -202,6 +207,13 @@ export function TopBar(): JSX.Element {
                   {m}
                 </button>
               ))}
+              <span
+                className="spork-ctx-item spork-faint"
+                aria-disabled
+                style={{ fontSize: 11 }}
+              >
+                Configure providers in Settings
+              </span>
             </div>
           </>
         )}

@@ -107,6 +107,69 @@ const BUILTIN_UI_CONTRIBUTIONS: Readonly<
     displayName: "Gate",
     family: "observing",
   },
+  // R2/R3 (REALIGNMENT_PLAN §3a): offline mirrors of the agentic + deterministic
+  // action node-type descriptors. These render correct cards/legend NOW even
+  // though the daemon dispatch that mints them lands in R3 (unknown-kind degrades
+  // gracefully); R3 registers the authoritative `ui_contributions` to match.
+  //
+  // Agentic family — an agent "mode" differing by its config (instructions /
+  // skills / tools / mcp), like VS Code agent modes.
+  "agent-plan": {
+    color: "#818cf8",
+    icon: "list",
+    displayName: "Plan",
+    family: "context",
+  },
+  "agent-ask": {
+    color: "#a78bfa",
+    icon: "messages-square",
+    displayName: "Ask",
+    family: "context",
+  },
+  "agent-explore": {
+    color: "#38bdf8",
+    icon: "search",
+    displayName: "Explore",
+    family: "context",
+  },
+  "agent-work": {
+    color: "#4ade80",
+    icon: "pencil",
+    displayName: "Work",
+    family: "mutating",
+  },
+  // Deterministic action family — repetitive actions as first-class nodes that
+  // record their shell output + result.
+  "action-run-tests": {
+    color: "#3b82f6",
+    icon: "check-circle",
+    displayName: "Run tests",
+    family: "observing",
+  },
+  "action-stress": {
+    color: "#a855f7",
+    icon: "activity",
+    displayName: "Stress",
+    family: "observing",
+  },
+  "action-sanity": {
+    color: "#f59e0b",
+    icon: "shield-check",
+    displayName: "Sanity",
+    family: "observing",
+  },
+  "action-git-push": {
+    color: "#f472b6",
+    icon: "upload",
+    displayName: "Push",
+    family: "observing",
+  },
+  "action-git-commit": {
+    color: "#fb923c",
+    icon: "git-commit",
+    displayName: "Commit",
+    family: "observing",
+  },
 };
 
 /**
