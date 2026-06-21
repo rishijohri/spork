@@ -346,9 +346,10 @@ ACTIVE GRAPH                                          EMPTY PROJECT
 │  Snapshot    ◆ owns · tree 0f3a…91c2  ⧉   │  🟢 ownsSnapshot + snapshotHash (short, copy)
 │  Parents     ▸ …9F8E7D6   ▸ …5C4B3A2      │  🟢 parentIds → click to select
 │  ─────────────────────────────────────    │
-│  Cost        $0.0142  (1.2k in / 3.1k out)│  🟡 cost ledger = P6
+│  Cost        $0.0142  (1.2k in / 3.1k out)│  🟢 cost ledger = P6
+│  Gate        ⊘ blocked · p99 regressed     │  🟢 gate verdict badge = P7
 │  Attribution agent · confidence 0.97 ✎    │  🟡 editable AttributionRecord UI = P7
-│  Handoff     [ View handoff doc ]          │  🟡 handoff view = P7
+│  Handoff     [ Handoff ] [ Explain ctx ]   │  🟢 handoff + context reads = P7
 │  Effects     ⚠ 1 external write recorded   │  🟡 effects-log surface = P7
 └─────────────────────────────────────────┘
 ```
@@ -471,8 +472,8 @@ NODE context menu (right-click a card)            BRANCH-ROW context menu (right
 │ ⇪ Push                🟢      │                  v1 shows only 🟢 rows; 🟡 rows are
 │ ──────────────────────────── │                  hidden until their phase (see §14).
 │ ⧉ Copy node id        🟢      │
-│ ⤓ Check out node     🟡 (P7)  │  ← materialize a worktree (F4 seam exists; no IPC cmd)
-│ 📌 Pin node           🟡 (P7)  │  ← protect from GC/eviction
+│ ⤓ Check out node     🟢 (P7)  │  ← NODE_CHECKOUT; non-tip auto-forks (§6.6)
+│ 📌 Pin node           🟡 (P8)  │  ← protect from GC/eviction
 │ ✦ New edit with agent 🟡 (P6) │  ← agent-turn loop
 └──────────────────────────────┘
 ```
@@ -808,16 +809,16 @@ The honesty gate. Every UI capability ↔ its DESIGN section ↔ its IPC/seam ba
 | **Code-mutating** agent run + fork-on-divergence | §6.6 | tiered executors (tool loop → new snapshot) | P8 | 🟡 |
 | Conversation **composer** (send → code-mutating turn) | §12, §13 | the code-mutating agent loop + context compile | P8 | 🟡 |
 | Per-node token/USD **budget** UI | §15.5, §9.3 | budget-scope editing surface | P7 | 🟡 |
-| Quality **gates** / verdicts / baselines / flaky | §8.3 | `GatePolicy`, baselines | P7 | 🟡 |
-| **Handoff doc** view (regenerable) | §13.5, §13.7 | `HandoffGenerator` (lineage) + read | P7 | 🟡 |
-| Expand-context / SelectionDecision trace | §13.6 | lineage Context Compiler | P7 | 🟡 |
-| Persistent/historical transcript viewer | §13.7 | transcript-read (history MCP) | P7 | 🟡 |
+| Quality **gates** / verdicts (gated merge + verdict badge) | §8.3 | `GatePolicy`, baselines, `BRANCH_MERGE_GATED` | P7 | 🟢 |
+| **Handoff doc** view (regenerable) | §13.5, §13.7 | `HandoffGenerator` (lineage) + `NODE_HANDOFF` | P7 | 🟢 |
+| Expand-context / SelectionDecision trace | §13.6 | lineage Context Compiler + `NODE_CONTEXT` | P7 | 🟢 |
+| Persistent/historical transcript viewer | §13.7 | `get_node_transcript` via `HISTORY_QUERY` | P7 | 🟢 |
 | Run-history browse (keep-last-N) | §7.3, §8.2 | run-history read | P7 | 🟡 |
 | Editable AttributionRecord UI | §10.2, A.3 | attribution edit surface | P7 | 🟡 |
 | Effects-log surface on a node | §11.4 | effects-log read | P7 | 🟡 |
-| Lineage/History MCP surfaces | §13.7 | `history-mcp` server | P7 | 🟡 |
+| Lineage/History MCP surfaces | §13.7 | `history-mcp` server + `HISTORY_QUERY` | P7 | 🟢 |
 | Repo-map view; memory store view/pin | §13.1, §13.6 | repo-map + memory | P7 | 🟡 |
-| "Check out this node" (materialize worktree) | §14.5, §11.1 | worktree-checkout IPC cmd (F4 seam exists) | P7/P8 | 🟡 |
+| "Check out this node" (fork-on-divergence) | §6.6, §11.1 | `NODE_CHECKOUT` | P7 | 🟢 |
 | Pin a node / baseline | §8.3, A.2 | pin IPC cmd | P7 | 🟡 |
 | Inline capability **grant** | §15.2 | capability-grant IPC cmd | P8 | 🟡 |
 | Custom-node marketplace; trust tiers; revoked flag | §9.1–9.3 | SDK + marketplace | P8 | 🟡 |
@@ -827,6 +828,8 @@ The honesty gate. Every UI capability ↔ its DESIGN section ↔ its IPC/seam ba
 | Live co-editing / presence | §19 (deferred) | CRDT event variants | post-P9 | ⛔ deferred |
 
 > **Footnote on the 🟢 P6 agent-run / routing / cost rows.** The desktop app (`app/src-tauri`) opens each project with `grant_model_access().with_agent_config(AgentConfig::with_default_local())`, so the read-only agent run, routing, privacy refusal, and cost ledger are genuinely live **against a local OpenAI-compatible server** (Ollama/LM Studio/vLLM/LiteLLM on `127.0.0.1:11434`) or a configured CLI agent — a local model server must be running. A **cloud** model still needs the deferred **TLS** transport, so selecting a cloud model with no local fallback surfaces an honest "all providers failed" activity line rather than a silent no-op. (A Settings surface to configure the endpoint/CLI is a small follow-up.)
+>
+> **Footnote on the 🟢 P7 rows.** P7 added the gated-merge flow (`BRANCH_MERGE_GATED` — re-run observers post-merge, evaluate a `GatePolicy`, attach an immutable gate-verdict node, withhold ref promotion on a block, override → audit), the gate-verdict **badge** on the node Info panel (`NodeView.gate`), the lineage-aware **context** + **handoff** reads (`NODE_CONTEXT` / `NODE_HANDOFF`, surfaced by the "Explain context" / "Handoff" affordances), the read-only **Lineage/History MCP** (`HISTORY_QUERY` → `tools/list` / `walk_ancestors` / `get_node_transcript` / `search_history`, gated on `nodes.readOutputs`), and historical **checkout** with fork-on-divergence (`NODE_CHECKOUT`). Still 🟡 within P7's design space (genuinely unbuilt UI): the rich typed **result-detail** panel, **run-history** browse, the editable **AttributionRecord** UI, the **effects-log** surface, the per-node **budget** UI, and **repo-map/memory** views — these need read surfaces or producers not yet exposed, so they remain documented-not-built rather than faked. The grafting `grant_model_access()` also grants `nodes.readOutputs` so the History MCP answers in the app; it stays deny-by-default otherwise.
 | Graphical custom-node authoring UI | §9 (deferred) | authoring surface | beyond P8 | ⛔ deferred |
 
 > **Removed from the current UI** (present today but not plan-mappable as live actions): the vague **View**, **Analyze**, and **Metadata** toolbar buttons. "View" duplicates node selection; "Analyze" has no implemented runner; "Metadata" becomes the **Info** tab. None map to a built command, so they go. (Earlier jargon — *Recalibrate / Create DT / Submit DT / Create Process* from the reference image — was already removed.)
