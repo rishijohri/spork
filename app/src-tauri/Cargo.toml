@@ -38,6 +38,9 @@ serde_json = "1"
 # the ONLY core crates the renderer's single mutation/read path needs.
 spork-daemon = { path = "../../crates/spork-daemon" }
 spork-ipc = { path = "../../crates/spork-ipc" }
+# For local model discovery: the dep-free plaintext-HTTP GET helper that probes
+# an OpenAI-compatible /v1/models listing (real installed models, no stub).
+spork-transport = { path = "../../crates/spork-transport" }
 
 [dev-dependencies]
 # The no-display backend tests open a real daemon over a temp dir to prove the

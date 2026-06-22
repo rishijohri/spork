@@ -3194,6 +3194,7 @@ dependencies = [
  "serde_json",
  "spork-daemon",
  "spork-ipc",
+ "spork-transport",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",

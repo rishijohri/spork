@@ -10,10 +10,11 @@
 
 import { useMemo, useState, type JSX } from "react";
 import { useUiStore } from "../state/store";
-import { allDescriptors, descriptorFor } from "../canvas/descriptors";
+import { descriptorFor, legendDescriptors } from "../canvas/descriptors";
 import { deriveLines } from "../state/lines";
 import { Icon } from "../ui/icons";
 import { IconButton } from "../ui/Button";
+import { ResizeHandle } from "../ui/ResizeHandle";
 
 /** The left navigator region. */
 export function Navigator(): JSX.Element {
@@ -25,6 +26,8 @@ export function Navigator(): JSX.Element {
   const selectNode = useUiStore((s) => s.selectNode);
   const focusedLane = useUiStore((s) => s.focusedLane);
   const focusLane = useUiStore((s) => s.focusLane);
+  const navWidth = useUiStore((s) => s.navWidth);
+  const setNavWidth = useUiStore((s) => s.setNavWidth);
   const [typeQuery, setTypeQuery] = useState("");
 
   // Per-kind counts from the live view-model.
@@ -37,7 +40,11 @@ export function Navigator(): JSX.Element {
   // The emergent lines (lanes), derived from the node DAG (main first).
   const lines = useMemo(() => deriveLines(view), [view]);
 
-  const descriptors = allDescriptors().filter(
+  // Honest legend: the universal agentic creatables + only the kinds that
+  // actually exist in the graph (contextual action/check types appear once real,
+  // never as always-present maybe-meaningless entries — REALIGNMENT_PLAN §3a).
+  const legend = useMemo(() => legendDescriptors(Object.keys(counts)), [counts]);
+  const descriptors = legend.filter(
     (d) =>
       !typeQuery ||
       d.label.toLowerCase().includes(typeQuery.toLowerCase()) ||
@@ -49,7 +56,7 @@ export function Navigator(): JSX.Element {
       <nav className="spork-nav spork-nav--collapsed" aria-label="Navigator">
         <div className="spork-nav-scroll" style={{ alignItems: "center", display: "flex", flexDirection: "column", gap: 8 }}>
           <IconButton icon="panel-left" label="Expand navigator" onClick={toggleNav} />
-          {allDescriptors().map((d) => (
+          {legend.map((d) => (
             <span
               key={d.kind}
               className="spork-swatch"
@@ -167,6 +174,15 @@ export function Navigator(): JSX.Element {
       <div style={{ borderTop: "1px solid var(--border-subtle)", padding: 4 }}>
         <IconButton icon="panel-left" label="Collapse navigator" onClick={toggleNav} />
       </div>
+      <ResizeHandle
+        axis="x"
+        sign={1}
+        value={navWidth}
+        min={180}
+        max={460}
+        onChange={setNavWidth}
+        label="Resize navigator"
+      />
     </nav>
   );
 }

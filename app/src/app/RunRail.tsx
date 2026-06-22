@@ -10,6 +10,7 @@ import type { JSX } from "react";
 import { useUiStore } from "../state/store";
 import type { ActivityEntry, ActivityLevel } from "../state/store";
 import { IconButton } from "../ui/Button";
+import { ResizeHandle } from "../ui/ResizeHandle";
 import { Icon, type IconName } from "../ui/icons";
 
 function formatTime(ts: number): string {
@@ -31,6 +32,8 @@ export function RunRail(): JSX.Element {
   const activity = useUiStore((s) => s.activity);
   const railCollapsed = useUiStore((s) => s.railCollapsed);
   const setRailCollapsed = useUiStore((s) => s.setRailCollapsed);
+  const railHeight = useUiStore((s) => s.railHeight);
+  const setRailHeight = useUiStore((s) => s.setRailHeight);
 
   function clear(): void {
     useUiStore.setState({ activity: [] });
@@ -48,6 +51,17 @@ export function RunRail(): JSX.Element {
 
   return (
     <section className="spork-rail" data-collapsed={railCollapsed} aria-label="Run rail">
+      {!railCollapsed && (
+        <ResizeHandle
+          axis="y"
+          sign={-1}
+          value={railHeight}
+          min={90}
+          max={520}
+          onChange={setRailHeight}
+          label="Resize activity rail"
+        />
+      )}
       <div className="spork-rail-head">
         <button className="spork-rail-tab" role="tab" aria-selected={true}>
           Activity
@@ -57,7 +71,7 @@ export function RunRail(): JSX.Element {
           role="tab"
           aria-selected={false}
           disabled
-          title="Streamed run output arrives in P7"
+          title="Recorded run output arrives with the action-node producer (R3/R4)"
         >
           Run output
         </button>
@@ -82,6 +96,7 @@ export function RunRail(): JSX.Element {
             role="log"
             aria-label="Activity log"
             aria-live="polite"
+            style={{ maxHeight: railHeight, overflowY: "auto" }}
           >
             {activity.map((e) => (
               <ActivityLine key={e.id} entry={e} />

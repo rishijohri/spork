@@ -8,11 +8,17 @@ import { availableModels } from "../TopBar";
 import { useUiStore, type AgentProvider } from "../../state/store";
 import { getAgentConfigs } from "../../ipc/mock";
 
-describe("availableModels (model-selector gating)", () => {
-  it("offers only local models for the default (null) provider", () => {
-    const models = availableModels(null);
-    expect(models).toEqual(["local/llama3.1"]);
-    // No first-party cloud provider is advertised (deferred — no TLS transport).
+describe("availableModels (model-selector honesty — no stub)", () => {
+  it("offers NOTHING when no local model is detected (no fake default)", () => {
+    // The old hardcoded `local/llama3.1` is gone — an empty list means "no model
+    // configured", which the UI shows as a configure-a-provider hint.
+    expect(availableModels(null)).toEqual([]);
+    expect(availableModels(null, [])).toEqual([]);
+  });
+
+  it("offers the REAL detected local models (and never a cloud guess)", () => {
+    const models = availableModels(null, ["qwen2.5-coder", "llama3.2"]);
+    expect(models).toEqual(["local/qwen2.5-coder", "local/llama3.2"]);
     expect(models.some((m) => m.startsWith("anthropic/"))).toBe(false);
     expect(models.some((m) => m.startsWith("openai/"))).toBe(false);
   });
@@ -31,7 +37,7 @@ describe("SettingsPopover provider form", () => {
   it("saves a CLI provider via set_agent_config and updates the store", async () => {
     render(<SettingsPopover />);
 
-    fireEvent.click(screen.getByRole("button", { name: "CLI agent" }));
+    fireEvent.click(screen.getByRole("button", { name: "Conforming CLI" }));
     fireEvent.change(screen.getByLabelText("CLI agent command"), {
       target: { value: "my-cli-agent" },
     });
@@ -62,7 +68,7 @@ describe("SettingsPopover provider form", () => {
     fireEvent.change(screen.getByLabelText("Local endpoint URL"), {
       target: { value: "http://127.0.0.1:1234/v1/chat/completions" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save provider" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save & detect models" }));
 
     await waitFor(() => {
       expect(getAgentConfigs()).toHaveLength(1);
@@ -71,6 +77,11 @@ describe("SettingsPopover provider form", () => {
       kind: "local",
       endpoint: "http://127.0.0.1:1234/v1/chat/completions",
     });
-    expect(useUiStore.getState().defaultModel).toBe("local/llama3.1");
+    // Saving probes the endpoint for its REAL models (mock returns a demo set)
+    // and points the default at the first detected one — never a hardcoded guess.
+    await waitFor(() => {
+      expect(useUiStore.getState().defaultModel).toBe("local/qwen2.5-coder");
+    });
+    expect(useUiStore.getState().localModels).toEqual(["qwen2.5-coder", "llama3.2"]);
   });
 });

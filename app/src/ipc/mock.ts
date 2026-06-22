@@ -578,6 +578,16 @@ export function getAgentConfigs(): readonly unknown[] {
   return state.agentConfigs;
 }
 
+/**
+ * Browser-mock local model discovery (no Tauri runtime). Returns a small demo
+ * set so the localhost:1420 preview's selector + chat are usable; the REAL app
+ * probes the actual local server via the `list_local_models` Tauri command.
+ */
+export function mockListLocalModels(endpoint: string): string[] {
+  // An empty/unset endpoint mimics "no server reachable" (empty selector).
+  return endpoint.trim() ? ["qwen2.5-coder", "llama3.2"] : [];
+}
+
 /** Whether the mock is in browser-mock auto-emit mode. */
 export function isAutoEmit(): boolean {
   return state.autoEmit;

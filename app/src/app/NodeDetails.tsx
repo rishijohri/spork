@@ -28,6 +28,7 @@ import { lastProject } from "./onboarding";
 import { fetchTranscript, type TranscriptTurn } from "../ipc/transcript";
 import { Icon } from "../ui/icons";
 import { Button, IconButton } from "../ui/Button";
+import { ResizeHandle } from "../ui/ResizeHandle";
 import { shortId, humanizeModel, formatMicroUsd, statusBadge } from "../ui/format";
 import type { Command, NodeView } from "../ipc/types";
 
@@ -108,6 +109,7 @@ export function NodeDetails(): JSX.Element {
   if (!node) {
     return (
       <section className="spork-details" aria-label="Node details">
+        <DetailsResizeHandle />
         <div className="spork-details-empty">
           <Icon name="circle-dot" size={22} />
           <p>Select a node to inspect it.</p>
@@ -145,6 +147,7 @@ export function NodeDetails(): JSX.Element {
 
   return (
     <section className="spork-details" aria-label="Node details">
+      <DetailsResizeHandle />
       <header className="spork-details-header">
         <span style={{ color: d.color, display: "inline-flex" }} aria-hidden="true">
           <Icon name={d.iconName} size={16} />
@@ -202,6 +205,24 @@ export function NodeDetails(): JSX.Element {
         )}
       </div>
     </section>
+  );
+}
+
+/** The left-edge drag handle that resizes the details panel (sign = -1 — moving
+ *  the cursor left widens it). */
+function DetailsResizeHandle(): JSX.Element {
+  const detailsWidth = useUiStore((s) => s.detailsWidth);
+  const setDetailsWidth = useUiStore((s) => s.setDetailsWidth);
+  return (
+    <ResizeHandle
+      axis="x"
+      sign={-1}
+      value={detailsWidth}
+      min={280}
+      max={620}
+      onChange={setDetailsWidth}
+      label="Resize details panel"
+    />
   );
 }
 

@@ -470,6 +470,51 @@ fn open_in_editor(path: String, editor: Option<String>) -> Result<(), String> {
     Err(format!("could not open editor for {path:?}: {last_err}"))
 }
 
+/// Discover the models actually installed on a local OpenAI-compatible endpoint
+/// (Ollama / LM Studio / vLLM) by probing its `/v1/models` listing — the no-stub
+/// honesty path so the UI offers *real* models instead of a hardcoded guess.
+///
+/// `endpoint` is the configured chat endpoint (e.g.
+/// `http://127.0.0.1:11434/v1/chat/completions`); the models listing is derived
+/// from it. Returns the model ids, or a string error if the server is unreachable
+/// or speaks no listing (the Settings form surfaces that — "no local server").
+/// Plaintext localhost only (a cloud `https://` listing is the TLS transport's
+/// job, R6).
+///
+/// # Errors
+/// Returns a string error if the endpoint is malformed, unreachable, or its
+/// response is not a recognizable model listing.
+#[tauri::command]
+fn list_local_models(endpoint: String) -> Result<Vec<String>, String> {
+    let ep = endpoint.trim();
+    // Derive the OpenAI-compatible models URL: a `…/v1/chat/completions` endpoint
+    // becomes `…/v1/models`; anything else gets `/v1/models` appended to its base.
+    let models_url = if let Some(prefix) = ep.strip_suffix("/chat/completions") {
+        format!("{prefix}/models")
+    } else {
+        format!("{}/v1/models", ep.trim_end_matches('/'))
+    };
+
+    let body = spork_transport::http_get_json(&models_url).map_err(|e| e.to_string())?;
+    // OpenAI-compatible: `{ "data": [ { "id": "…" }, … ] }`. Be tolerant of a bare
+    // `{ "models": [ { "name": "…" } ] }` (Ollama's native /api/tags shape) too.
+    let mut ids: Vec<String> = Vec::new();
+    if let Some(arr) = body.get("data").and_then(|d| d.as_array()) {
+        for m in arr {
+            if let Some(id) = m.get("id").and_then(|i| i.as_str()) {
+                ids.push(id.to_string());
+            }
+        }
+    } else if let Some(arr) = body.get("models").and_then(|d| d.as_array()) {
+        for m in arr {
+            if let Some(name) = m.get("name").and_then(|i| i.as_str()) {
+                ids.push(name.to_string());
+            }
+        }
+    }
+    Ok(ids)
+}
+
 /// Build and run the Tauri application: manage [`AppState`] and register the
 /// command handlers.
 ///
@@ -494,7 +539,8 @@ pub fn run() {
             dispatch,
             graph_view,
             set_agent_config,
-            open_in_editor
+            open_in_editor,
+            list_local_models
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Spork Tauri application");

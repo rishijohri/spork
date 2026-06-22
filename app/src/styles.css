@@ -1474,14 +1474,26 @@ textarea:focus-visible {
 .spork-lane-gutter:hover { color: var(--fg); border-color: var(--border-strong); }
 .spork-lane-fork { color: var(--accent); }
 
-/* ----- Hero chat — a first-class view of one line (messages are nodes). ----- */
+/* ----- Hero chat — a first-class view of one line (messages are nodes). -----
+ * A calm, focused surface (Gemini-inspired): a quiet near-black field, a single
+ * soft glow that follows the active agentic mode's color, generous space, and a
+ * rounded composer "card" as the focal point. Every turn still carries its node
+ * identity — the point that sets Spork's chat apart. */
 .spork-chat {
   --mode: var(--accent);
+  position: relative;
   display: flex; flex-direction: column; height: 100%; min-height: 0;
-  background:
-    radial-gradient(120% 80% at 100% 0%, color-mix(in srgb, var(--mode) 7%, transparent), transparent 60%),
-    var(--bg-base);
+  background: var(--bg-sunken);
+  overflow: hidden;
 }
+/* The ambient glow — low, centered, mode-tinted. */
+.spork-chat::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 0;
+  background:
+    radial-gradient(60% 50% at 50% 78%, color-mix(in srgb, var(--mode) 11%, transparent), transparent 70%);
+  transition: background 0.4s ease;
+}
+.spork-chat > * { position: relative; z-index: 1; }
 .spork-chat-empty {
   margin: auto; text-align: center; color: var(--fg-muted);
   display: flex; flex-direction: column; align-items: center; gap: 8px;
@@ -1489,32 +1501,55 @@ textarea:focus-visible {
 .spork-chat-empty h3 { margin: 4px 0 0; color: var(--fg); }
 .spork-chat-head {
   display: flex; align-items: center; gap: 10px;
-  padding: 12px 16px; border-bottom: 1px solid var(--border-subtle);
+  padding: 13px 18px;
 }
 .spork-chat-linemark {
-  display: inline-flex; padding: 6px; border-radius: 8px;
-  color: var(--mode); background: color-mix(in srgb, var(--mode) 14%, transparent);
+  display: inline-flex; padding: 6px; border-radius: 9px;
+  color: var(--mode); background: color-mix(in srgb, var(--mode) 16%, transparent);
 }
 .spork-chat-headtext { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
-.spork-chat-linename { font-weight: 700; font-size: 14px; color: var(--fg); }
+.spork-chat-linename { font-weight: 650; font-size: 14px; color: var(--fg); letter-spacing: -0.01em; }
 .spork-chat-linesub { font-size: 11px; color: var(--fg-faint); }
 .spork-chat-jump {
   display: inline-flex; align-items: center; gap: 5px;
-  padding: 5px 10px; border-radius: 7px; font-size: 12px;
-  color: var(--fg-muted); background: var(--bg-surface);
-  border: 1px solid var(--border-subtle); cursor: pointer;
+  padding: 6px 11px; border-radius: 999px; font-size: 12px;
+  color: var(--fg-muted); background: color-mix(in srgb, var(--bg-surface) 70%, transparent);
+  border: 1px solid var(--border-subtle); cursor: pointer; backdrop-filter: blur(8px);
 }
 .spork-chat-jump:hover { color: var(--fg); border-color: var(--border-strong); }
 .spork-chat-thread {
   position: relative; flex: 1; min-height: 0; overflow-y: auto;
-  padding: 18px 20px 18px 26px;
+  padding: 20px 22px 20px 30px;
+  scrollbar-width: thin;
 }
+/* When the line has no turns yet: a calm centered welcome (the Gemini moment). */
+.spork-chat-thread--empty { display: flex; align-items: center; justify-content: center; padding-bottom: 8vh; }
+.spork-chat-welcome {
+  text-align: center; max-width: 460px;
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  animation: spork-rise 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.spork-chat-orb {
+  width: 54px; height: 54px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--mode) 90%, white), var(--mode) 60%, color-mix(in srgb, var(--mode) 40%, black));
+  box-shadow: 0 0 36px color-mix(in srgb, var(--mode) 55%, transparent), inset 0 -4px 10px rgba(0,0,0,0.35);
+  animation: spork-breathe 5s ease-in-out infinite;
+}
+.spork-chat-greeting {
+  margin: 0; font-size: 30px; font-weight: 500; letter-spacing: -0.02em;
+  color: var(--fg);
+  background: linear-gradient(180deg, var(--fg), color-mix(in srgb, var(--fg) 62%, var(--mode)));
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+}
+.spork-chat-subtle { margin: 0; font-size: 13.5px; line-height: 1.6; color: var(--fg-muted); }
+.spork-chat-subtle strong { color: var(--fg); font-weight: 600; }
+@keyframes spork-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes spork-breathe { 0%, 100% { transform: scale(1); opacity: 0.92; } 50% { transform: scale(1.06); opacity: 1; } }
 .spork-chat-spine {
-  position: absolute; left: 33px; top: 18px; bottom: 18px; width: 2px;
-  background: linear-gradient(var(--border-subtle), transparent);
+  position: absolute; left: 37px; top: 22px; bottom: 22px; width: 2px;
+  background: linear-gradient(color-mix(in srgb, var(--mode) 40%, var(--border-subtle)), transparent);
 }
-.spork-chat-hint { padding: 10px 0; }
-.spork-turn { position: relative; display: flex; gap: 14px; padding: 6px 0 16px; }
+.spork-turn { position: relative; display: flex; gap: 14px; padding: 6px 0 18px; }
 .spork-turn-node {
   position: relative; z-index: 1; flex: none;
   width: 22px; height: 22px; border-radius: 7px;
@@ -1561,48 +1596,71 @@ textarea:focus-visible {
 .spork-chat-event--selected { border-style: solid; border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
 .spork-chat-eventkind { font-weight: 600; color: var(--fg); }
 
-/* Composer — picks an agentic mode; the send is themed by the mode color. */
+/* Composer — a single rounded card; the agentic mode tints its glow + send. */
 .spork-composer {
-  border-top: 1px solid var(--border-subtle);
-  padding: 12px 16px 14px; background: var(--bg-surface);
-  display: flex; flex-direction: column; gap: 9px;
+  padding: 6px 18px 16px;
+  display: flex; flex-direction: column; align-items: center; gap: 7px;
 }
-.spork-composer-modes { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.spork-composer-card {
+  width: 100%; max-width: 760px;
+  background: color-mix(in srgb, var(--bg-raised) 88%, transparent);
+  border: 1px solid var(--border-strong); border-radius: 22px;
+  padding: 12px 14px 10px;
+  box-shadow: var(--elev-2);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.spork-composer-card:focus-within {
+  border-color: color-mix(in srgb, var(--mode) 60%, transparent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--mode) 16%, transparent), var(--elev-2);
+}
+.spork-composer-input {
+  width: 100%; resize: none; min-height: 26px; max-height: 220px;
+  background: transparent; color: var(--fg);
+  border: none; padding: 2px 4px 6px;
+  font-family: var(--font-ui); font-size: 14.5px; line-height: 1.5;
+}
+.spork-composer-input::placeholder { color: var(--fg-faint); }
+.spork-composer-input:focus { outline: none; }
+.spork-composer-bar { display: flex; align-items: center; gap: 8px; }
+.spork-composer-modes { display: inline-flex; gap: 5px; flex-wrap: wrap; }
 .spork-mode {
   --mc: var(--accent);
   display: inline-flex; align-items: center; gap: 5px;
-  padding: 4px 11px; border-radius: 999px; font-size: 12px; cursor: pointer;
+  padding: 4px 10px; border-radius: 999px; font-size: 12px; cursor: pointer;
   color: var(--fg-muted);
-  background: var(--bg-sunken); border: 1px solid var(--border-subtle);
+  background: transparent; border: 1px solid transparent;
+  transition: all 0.15s ease;
 }
-.spork-mode:hover { color: var(--fg); }
+.spork-mode:hover { color: var(--fg); background: var(--bg-overlay); }
 .spork-mode--on {
-  color: var(--mc); border-color: color-mix(in srgb, var(--mc) 55%, transparent);
-  background: color-mix(in srgb, var(--mc) 14%, transparent);
+  color: var(--mc); border-color: color-mix(in srgb, var(--mc) 50%, transparent);
+  background: color-mix(in srgb, var(--mc) 15%, transparent);
 }
-.spork-composer-input {
-  width: 100%; resize: vertical; min-height: 56px;
-  background: var(--bg-base); color: var(--fg);
-  border: 1px solid var(--border-subtle); border-radius: 10px;
-  padding: 10px 12px; font-family: var(--font-ui); font-size: 13px; line-height: 1.5;
-}
-.spork-composer-input:focus {
-  outline: none; border-color: color-mix(in srgb, var(--mode) 60%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mode) 18%, transparent);
-}
-.spork-composer-foot { display: flex; align-items: center; gap: 12px; }
 .spork-composer-model {
-  display: inline-flex; align-items: center; gap: 5px; color: var(--fg-muted); font-size: 12px;
+  display: inline-flex; align-items: center; gap: 3px; color: var(--fg-muted); font-size: 12px;
+  padding: 3px 4px 3px 9px; border-radius: 999px; border: 1px solid var(--border-subtle);
+  background: var(--bg-sunken);
 }
 .spork-composer-model select {
-  background: var(--bg-sunken); color: var(--fg);
-  border: 1px solid var(--border-subtle); border-radius: 6px; padding: 2px 6px; font-size: 12px;
+  background: transparent; color: var(--fg); border: none; font-size: 12px;
+  padding: 0; -webkit-appearance: none; appearance: none; cursor: pointer; outline: none;
 }
-.spork-composer-context { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; }
-.spork-composer-send { background: var(--mode); border-color: var(--mode); }
-.spork-composer-send:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--mode) 85%, white); border-color: var(--mode);
+.spork-composer-setup {
+  display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+  padding: 4px 11px; border-radius: 999px; font-size: 12px;
+  color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
 }
+.spork-composer-send-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; border-radius: 50%; cursor: pointer; flex: none;
+  color: var(--on-accent); background: var(--mode); border: none;
+  transition: transform 0.12s ease, filter 0.15s ease, background 0.2s ease;
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--mode) 45%, transparent);
+}
+.spork-composer-send-btn:hover:not(:disabled) { filter: brightness(1.08); transform: translateY(-1px); }
+.spork-composer-send-btn:disabled { background: var(--bg-overlay); color: var(--fg-faint); box-shadow: none; cursor: default; }
+.spork-composer-context { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; margin: 0; }
 
 /* Node-Details — Result tab headline. */
 .spork-result-headline {
@@ -1614,3 +1672,44 @@ textarea:focus-visible {
 .spork-result-headline[data-status="blocked"] .spork-status-dot { background: var(--warn); }
 .spork-result-headline[data-status="pending"] .spork-status-dot { background: var(--neutral); }
 .spork-mono { font-family: var(--font-mono); }
+
+/* ----- Resizable panels (drag handles on the nav / details / rail edges). ----- */
+.spork-nav, .spork-details, .spork-rail { position: relative; }
+.spork-resize { position: absolute; z-index: 20; touch-action: none; }
+.spork-resize--x { top: 0; bottom: 0; width: 8px; cursor: col-resize; }
+.spork-resize--y { left: 0; right: 0; height: 8px; cursor: row-resize; }
+.spork-nav > .spork-resize--x { right: -4px; }
+.spork-details > .spork-resize--x { left: -4px; }
+.spork-rail > .spork-resize--y { top: -4px; }
+.spork-resize::after {
+  content: ""; position: absolute; background: transparent; border-radius: 2px;
+  transition: background 0.15s ease;
+}
+.spork-resize--x::after { top: 0; bottom: 0; left: 50%; width: 2px; transform: translateX(-50%); }
+.spork-resize--y::after { left: 0; right: 0; top: 50%; height: 2px; transform: translateY(-50%); }
+.spork-resize:hover::after,
+.spork-resize:focus-visible::after { background: var(--accent); }
+.spork-resize:focus-visible { outline: none; }
+body.spork-resizing { user-select: none; }
+body.spork-resizing iframe { pointer-events: none; }
+
+/* ----- Settings: driving-model + orchestrator sections. ----- */
+.spork-model-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.spork-model-chips .spork-chip { max-width: none; color: var(--fg); }
+.spork-pill-soon {
+  font-size: 9.5px; letter-spacing: 0.04em; text-transform: uppercase; font-weight: 700;
+  padding: 2px 7px; border-radius: 999px;
+  color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
+}
+.spork-byok {
+  margin-top: 6px; padding-top: 10px; border-top: 1px dashed var(--border-subtle);
+  display: flex; flex-direction: column; gap: 7px;
+}
+.spork-byok input:disabled { opacity: 0.55; cursor: not-allowed; }
+.spork-code-line {
+  display: block; font-family: var(--font-mono); font-size: 11px;
+  color: var(--fg-muted); background: var(--bg-sunken);
+  border: 1px solid var(--border-subtle); border-radius: 7px;
+  padding: 7px 9px; overflow-x: auto; white-space: nowrap;
+}

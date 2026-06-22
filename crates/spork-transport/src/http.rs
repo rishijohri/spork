@@ -96,6 +96,71 @@ impl HttpTransport {
     }
 }
 
+/// Perform a plaintext-HTTP **GET** against `url` and return the parsed JSON body.
+///
+/// Reuses the same robust response parsing as [`HttpTransport`] (status line +
+/// Content-Length / chunked / EOF body) and the same plaintext-only boundary
+/// (refuses `https://`). Used for **local model discovery** — probing an
+/// OpenAI-compatible `/v1/models` listing on a local server (Ollama / LM Studio /
+/// vLLM) so the UI can offer the models that are *actually* installed instead of a
+/// hardcoded guess (the no-stub honesty fix). A cloud `https://` listing is the
+/// TLS transport's job (a separate impl behind the seam).
+///
+/// # Errors
+/// [`TransportError`] on an unsupported scheme, a connect/read failure, a non-2xx
+/// status, or a non-JSON body.
+pub fn http_get_json(url: &str) -> Result<Value, TransportError> {
+    let target = HttpTarget::parse(url)?;
+    let addr = (target.host.as_str(), target.port)
+        .to_socket_addrs()
+        .map_err(|e| TransportError::Io(format!("resolve {}: {e}", target.host)))?
+        .next()
+        .ok_or_else(|| TransportError::Io(format!("no address for {}", target.host)))?;
+    let mut stream = TcpStream::connect_timeout(&addr, DEFAULT_CONNECT_TIMEOUT)
+        .map_err(|e| TransportError::Io(format!("connect {addr}: {e}")))?;
+    stream
+        .set_read_timeout(Some(DEFAULT_READ_TIMEOUT))
+        .map_err(|e| TransportError::Io(format!("set read timeout: {e}")))?;
+
+    let req = format!(
+        "GET {} HTTP/1.1\r\nHost: {}\r\nAccept: application/json\r\nConnection: close\r\n\r\n",
+        target.path,
+        target.host_header()
+    );
+    stream
+        .write_all(req.as_bytes())
+        .map_err(|e| TransportError::Io(format!("write request: {e}")))?;
+    stream
+        .flush()
+        .map_err(|e| TransportError::Io(format!("flush request: {e}")))?;
+
+    let mut raw = Vec::new();
+    (&mut stream)
+        .take(DEFAULT_MAX_RESPONSE_BYTES.saturating_add(1))
+        .read_to_end(&mut raw)
+        .map_err(|e| TransportError::Io(format!("read response: {e}")))?;
+    if raw.len() as u64 > DEFAULT_MAX_RESPONSE_BYTES {
+        return Err(TransportError::MalformedResponse(format!(
+            "response exceeds the {DEFAULT_MAX_RESPONSE_BYTES}-byte cap"
+        )));
+    }
+
+    let (status, body_bytes) = parse_http_response(&raw)?;
+    let body_str = String::from_utf8_lossy(&body_bytes);
+    if !(200..300).contains(&status) {
+        return Err(TransportError::Http {
+            status,
+            body: truncate(body_str.trim(), 512),
+        });
+    }
+    serde_json::from_str::<Value>(body_str.trim()).map_err(|e| {
+        TransportError::MalformedResponse(format!(
+            "response body is not JSON ({e}): {}",
+            truncate(body_str.trim(), 256)
+        ))
+    })
+}
+
 impl Transport for HttpTransport {
     fn invoke(&self, request: &Value) -> Result<Value, TransportError> {
         let target = HttpTarget::parse(&self.endpoint)?;
@@ -456,6 +521,40 @@ mod tests {
         assert!(matches!(
             t.invoke(&serde_json::json!({})).unwrap_err(),
             TransportError::Io(_)
+        ));
+    }
+
+    #[test]
+    fn http_get_json_parses_an_openai_models_listing() {
+        // The GET helper drives local model discovery: an OpenAI-compatible
+        // /v1/models listing parses into the real installed model ids.
+        let body =
+            "{\"object\":\"list\",\"data\":[{\"id\":\"llama3.2\"},{\"id\":\"qwen2.5-coder\"}]}";
+        let resp: &'static [u8] = Box::leak(
+            format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .into_bytes()
+            .into_boxed_slice(),
+        );
+        let base = serve_once(resp);
+        let v = http_get_json(&format!("{base}/v1/models")).unwrap();
+        let ids: Vec<String> = v["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["id"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(ids, ["llama3.2", "qwen2.5-coder"]);
+    }
+
+    #[test]
+    fn http_get_json_refuses_https() {
+        assert!(matches!(
+            http_get_json("https://api.openai.com/v1/models").unwrap_err(),
+            TransportError::UnsupportedEndpoint(_)
         ));
     }
 

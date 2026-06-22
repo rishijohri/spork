@@ -47,7 +47,7 @@ mod http;
 mod subprocess;
 
 pub use error::TransportError;
-pub use http::HttpTransport;
+pub use http::{http_get_json, HttpTransport};
 pub use subprocess::SubprocessTransport;
 
 use serde_json::Value;

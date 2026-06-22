@@ -65,6 +65,9 @@ describe("Ask-agent modal (NODE_AGENT_RUN)", () => {
   beforeEach(() => {
     useUiStore.getState().reset();
     useUiStore.getState().setView(view());
+    // Seed a detected local model so the honest model selector is populated
+    // (with no provider configured the selector is empty — the no-stub default).
+    useUiStore.getState().setLocalModels(["llama3.1"]);
     useUiStore.getState().openModal({ kind: "askAgent", nodeId: TARGET });
   });
 
@@ -136,7 +139,9 @@ describe("Ask-agent modal (NODE_AGENT_RUN)", () => {
 
   it("attaches a priced context node and shows the answer summary", async () => {
     renderModals();
-    // Default model is the cloud Claude selector → a non-zero priced cost.
+    // The honest default is a real *local* model (the only kind backed without the
+    // TLS transport), which is free at the seam — so the attached node carries a
+    // cost RECORD (microUsd ≥ 0), not necessarily a non-zero spend.
     fireEvent.change(screen.getByLabelText("Prompt"), { target: { value: "explain" } });
     fireEvent.click(screen.getByRole("button", { name: "Ask" }));
 
@@ -148,7 +153,7 @@ describe("Ask-agent modal (NODE_AGENT_RUN)", () => {
       expect(ctx).toBeDefined();
       expect(ctx!.family).toBe("context");
       expect(ctx!.cost).not.toBeNull();
-      expect(ctx!.cost!.microUsd).toBeGreaterThan(0);
+      expect(ctx!.cost!.microUsd).toBeGreaterThanOrEqual(0);
     });
     const edge = useUiStore
       .getState()

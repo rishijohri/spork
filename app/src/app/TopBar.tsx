@@ -19,34 +19,26 @@ import type { NodeView } from "../ipc/types";
 import type { AgentProvider } from "../state/store";
 
 /**
- * Model choices, as `provider/model` selector keys (P6 multi-provider routing).
- * The selector sets the default an agent run uses; the router resolves the key to
- * a provider (privacy enforced) and prices the turn. `local/*` runs offline.
- *
- * The generic CLI-as-model route is deprecated (REALIGNMENT_PLAN.md §2), so no
- * `cli/*` key is advertised here; a configured *conforming* CLI agent still
- * surfaces a single `cli/<command>` key via {@link availableModels}.
+ * The model selector keys that are actually **backed** by the configured
+ * provider (no stub — REALIGNMENT_PLAN.md §2; the renderer must never advertise a
+ * model the daemon cannot reach). A CLI agent surfaces its single `cli/<command>`
+ * key; a local endpoint surfaces the models actually **detected** on it
+ * (`localModels`, probed from the server — empty until detected, so there is no
+ * fake default like the old hardcoded `llama3.1`). Cloud BYOK models (Anthropic /
+ * OpenAI / Google) are offered only once a key + the TLS transport exist (R6), so
+ * they are not returned yet. An empty result means "no model configured" — the UI
+ * shows a configure-a-provider hint, never a fabricated model.
  */
-export const MODELS = [
-  "anthropic/claude-opus-4-8",
-  "anthropic/claude-sonnet-4-6",
-  "openai/gpt-4o",
-  "local/llama3.1",
-] as const;
-
-/**
- * The model selector keys that are actually **backed** for the configured
- * provider (P7.5 MVP, W3). The daemon default (null) is the local OpenAI-compatible
- * endpoint, so `local/*` keys are offered; a CLI config offers a single
- * `cli/<command>` key for the configured agent. First-party cloud providers are
- * deferred (no TLS transport yet — docs/MVP_PLAN.md §3), so they are never
- * offered — closing the "UI advertises an unbacked provider" honesty gap.
- */
-export function availableModels(provider: AgentProvider | null): string[] {
+export function availableModels(
+  provider: AgentProvider | null,
+  localModels: readonly string[] = [],
+): string[] {
   if (provider?.kind === "cli") {
     return [`cli/${provider.command?.trim() || "agent"}`];
   }
-  return MODELS.filter((m) => m.startsWith("local/"));
+  // A local endpoint (or the daemon default, which is local): only the real,
+  // detected models — never a hardcoded guess.
+  return localModels.map((m) => `local/${m}`);
 }
 
 const CONN_LABEL: Record<string, string> = {
@@ -75,6 +67,7 @@ export function TopBar(): JSX.Element {
   const defaultModel = useUiStore((s) => s.defaultModel);
   const setDefaultModel = useUiStore((s) => s.setDefaultModel);
   const agentProvider = useUiStore((s) => s.agentProvider);
+  const localModels = useUiStore((s) => s.localModels);
   const setPaletteOpen = useUiStore((s) => s.setPaletteOpen);
   const settingsOpen = useUiStore((s) => s.settingsOpen);
   const setSettingsOpen = useUiStore((s) => s.setSettingsOpen);
@@ -95,6 +88,7 @@ export function TopBar(): JSX.Element {
     (headTarget && lineOfNode(view, headTarget)) ||
     null;
   const lineLabel = currentLine?.label ?? "main line";
+  const models = availableModels(agentProvider, localModels);
 
   return (
     <header className="spork-topbar" aria-label="Top bar">
@@ -178,7 +172,7 @@ export function TopBar(): JSX.Element {
           onClick={() => setModelMenu((v) => !v)}
         >
           <span className="spork-model-dot" />
-          {humanizeModel(defaultModel)}
+          {defaultModel ? humanizeModel(defaultModel) : "No model"}
           <Icon name="chevron-down" size={12} />
         </Button>
         {modelMenu && (
@@ -192,28 +186,35 @@ export function TopBar(): JSX.Element {
               <span className="spork-ctx-item spork-faint" aria-disabled style={{ fontSize: 11 }}>
                 Default for new nodes
               </span>
-              {availableModels(agentProvider).map((m) => (
+              {models.length === 0 ? (
                 <button
-                  key={m}
                   className="spork-ctx-item"
-                  role="menuitemradio"
-                  aria-checked={m === defaultModel}
+                  role="menuitem"
                   onClick={() => {
-                    setDefaultModel(m);
                     setModelMenu(false);
+                    setSettingsOpen(true);
                   }}
                 >
-                  {m === defaultModel ? <Icon name="check" size={13} /> : <span style={{ width: 13 }} />}
-                  {m}
+                  <Icon name="settings" size={13} />
+                  No models — set up a provider…
                 </button>
-              ))}
-              <span
-                className="spork-ctx-item spork-faint"
-                aria-disabled
-                style={{ fontSize: 11 }}
-              >
-                Configure providers in Settings
-              </span>
+              ) : (
+                models.map((m) => (
+                  <button
+                    key={m}
+                    className="spork-ctx-item"
+                    role="menuitemradio"
+                    aria-checked={m === defaultModel}
+                    onClick={() => {
+                      setDefaultModel(m);
+                      setModelMenu(false);
+                    }}
+                  >
+                    {m === defaultModel ? <Icon name="check" size={13} /> : <span style={{ width: 13 }} />}
+                    {humanizeModel(m)}
+                  </button>
+                ))
+              )}
             </div>
           </>
         )}

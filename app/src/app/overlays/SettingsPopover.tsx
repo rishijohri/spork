@@ -1,19 +1,22 @@
-// Settings popover (UI_UX_DESIGN.md §5.13).
+// Settings popover (UI_UX_DESIGN.md §5.13; REALIGNMENT_PLAN §4, §5d).
 //
-// The few real v1 preferences (🟢): theme (dark-only in v1), density, a
-// panel-layout reset, the default-model default, and — P7.5 MVP (W3) — the agent
-// **provider** (a local OpenAI-compatible HTTP endpoint, the default route, or a
-// *conforming* CLI agent that speaks Spork's JSONL protocol). The provider is
-// configured here once and persisted by the daemon under
-// <project>/.spork/agent_config.json; the endpoint/CLI command is config, not a
-// secret (DESIGN.md §15.1). The generic CLI-as-model route is deprecated
-// (REALIGNMENT_PLAN.md §2): a real coding CLI (claude/copilot/cursor) should
-// drive Spork over the Orchestration MCP, not be driven as a model.
-// Engine-health / Extensions are forward-map (P8).
+// The two connectivity arrows are now configured in SEPARATE sections, since they
+// have different requirements (the user's ask):
+//   • Driving model  — Spork drives a model for its own nodes. Local server
+//     (Ollama/LM Studio/vLLM, with REAL model detection — no fake default) or a
+//     conforming CLI; cloud BYOK (Anthropic/OpenAI/Google) is shown honestly as
+//     landing next (it needs the TLS transport, R6).
+//   • Orchestrator   — your existing agent (Claude Code/Copilot/Cursor) drives
+//     Spork via the write-capable Orchestration MCP (R5; forward-mapped).
+// The local endpoint / CLI command is config, not a secret (DESIGN.md §15.1); a
+// cloud key is resolved only inside the daemon (vault, `vaultRef`). Other v1
+// prefs (🟢): theme, density, panel reset, default model, editor. Engine-health /
+// Extensions are forward-map (P8).
 
 import { useState, type JSX } from "react";
 import { useUiStore, type AgentProvider } from "../../state/store";
-import { MODELS, availableModels } from "../TopBar";
+import { availableModels } from "../TopBar";
+import { refreshLocalModels, DEFAULT_LOCAL_ENDPOINT } from "../models";
 import { humanizeModel } from "../../ui/format";
 import {
   setAgentConfig,
@@ -21,18 +24,16 @@ import {
   type AgentProviderConfig,
 } from "../../ipc/client";
 
-/** The default local endpoint the provider form prefills (Ollama/LM-Studio). */
-const DEFAULT_LOCAL_ENDPOINT = "http://127.0.0.1:11434/v1/chat/completions";
-
 /** The agent-provider configuration section (P7.5 MVP, W3). */
 function ProviderSection(): JSX.Element {
   const agentProvider = useUiStore((s) => s.agentProvider);
   const setAgentProvider = useUiStore((s) => s.setAgentProvider);
-  const setDefaultModel = useUiStore((s) => s.setDefaultModel);
+  const localModels = useUiStore((s) => s.localModels);
   const logActivity = useUiStore((s) => s.logActivity);
   const view = useUiStore((s) => s.view);
 
   const [kind, setKind] = useState<"local" | "cli">(agentProvider?.kind ?? "local");
+  const [cloudProvider, setCloudProvider] = useState<"anthropic" | "openai" | "google">("anthropic");
   const [endpoint, setEndpoint] = useState(
     agentProvider?.endpoint ?? DEFAULT_LOCAL_ENDPOINT,
   );
@@ -60,8 +61,9 @@ function ProviderSection(): JSX.Element {
       await setAgentConfig(cfg);
       const provider: AgentProvider = { ...cfg };
       setAgentProvider(provider);
-      const backed = availableModels(provider);
-      if (backed[0]) setDefaultModel(backed[0]);
+      // Probe the endpoint for its REAL installed models + set an honest default
+      // (no hardcoded guess) — `refreshLocalModels` reads the just-set provider.
+      await refreshLocalModels();
       logActivity(
         "success",
         kind === "cli"
@@ -92,7 +94,10 @@ function ProviderSection(): JSX.Element {
     }
     setBusy(true);
     try {
-      const model = availableModels(provider)[0] ?? "";
+      const model =
+        useUiStore.getState().defaultModel ||
+        availableModels(provider, useUiStore.getState().localModels)[0] ||
+        "";
       const result = await dispatch({
         command: "NODE_AGENT_RUN",
         targetNodeId: head,
@@ -118,15 +123,19 @@ function ProviderSection(): JSX.Element {
 
   return (
     <div className="spork-popover-group">
-      <span className="spork-eyebrow">Agent provider</span>
+      <span className="spork-eyebrow">Driving model</span>
+      <span className="spork-muted" style={{ fontSize: 11 }}>
+        Spork drives a model for its own in-app nodes (the chat + agentic runs).
+        This is separate from connecting your own agent as an orchestrator (below).
+      </span>
       <div className="spork-row-between">
-        <span>Provider</span>
-        <div className="spork-seg" role="group" aria-label="Agent provider">
+        <span>Source</span>
+        <div className="spork-seg" role="group" aria-label="Driving model source">
           <button aria-pressed={kind === "local"} onClick={() => setKind("local")}>
-            Local endpoint
+            Local server
           </button>
           <button aria-pressed={kind === "cli"} onClick={() => setKind("cli")}>
-            CLI agent
+            Conforming CLI
           </button>
         </div>
       </div>
@@ -181,16 +190,96 @@ function ProviderSection(): JSX.Element {
 
       <div style={{ display: "flex", gap: 8 }}>
         <button className="btn btn--primary" disabled={busy} onClick={() => void save()}>
-          Save provider
+          {busy ? "Saving…" : kind === "local" ? "Save & detect models" : "Save provider"}
         </button>
         <button className="btn" disabled={busy} onClick={() => void test()}>
           Test connection
         </button>
       </div>
+
+      {kind === "local" && localModels.length > 0 && (
+        <div className="spork-model-chips" role="status" aria-label="Detected models">
+          <span className="spork-muted" style={{ fontSize: 11 }}>
+            Detected on this server:
+          </span>
+          {localModels.map((m) => (
+            <span key={m} className="spork-chip" title={m}>
+              {m}
+            </span>
+          ))}
+        </div>
+      )}
+
       <span className="spork-muted" style={{ fontSize: 11 }}>
         Saved to <code>.spork/agent_config.json</code> in the project. The endpoint
         / command is config, never a secret.
       </span>
+
+      {/* Cloud (BYOK) — honest forward-map: keys go in the daemon vault and drive
+          over TLS, which is the transport landing next (R6). Shown, not faked. */}
+      <div className="spork-byok">
+        <div className="spork-row-between">
+          <span style={{ fontWeight: 600, fontSize: 12 }}>Cloud (BYOK)</span>
+          <span className="spork-pill-soon">landing next</span>
+        </div>
+        <div className="spork-seg" role="group" aria-label="Cloud provider">
+          {(["anthropic", "openai", "google"] as const).map((p) => (
+            <button key={p} aria-pressed={cloudProvider === p} onClick={() => setCloudProvider(p)}>
+              {CLOUD_LABEL[p]}
+            </button>
+          ))}
+        </div>
+        <label className="spork-field">
+          <span className="spork-muted" style={{ fontSize: 11 }}>
+            {CLOUD_LABEL[cloudProvider]} API key
+          </span>
+          <input
+            type="password"
+            placeholder="Secure key vault + TLS — landing next"
+            aria-label="Cloud API key"
+            disabled
+          />
+        </label>
+        <span className="spork-muted" style={{ fontSize: 11 }}>
+          Your key is resolved inside the daemon (vault, <code>vaultRef</code>) and
+          sent over TLS — the renderer never holds it. The secure transport is in
+          progress; until then, use a local server above.
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/** Friendly cloud-provider labels (BYOK). */
+const CLOUD_LABEL: Record<"anthropic" | "openai" | "google", string> = {
+  anthropic: "Anthropic",
+  openai: "OpenAI",
+  google: "Google",
+};
+
+/** The Orchestrator-connection section (REALIGNMENT_PLAN §4, R5) — your existing
+ *  agent drives Spork over a write-capable MCP. Honest forward-map until R5. */
+function OrchestratorSection(): JSX.Element {
+  return (
+    <div className="spork-popover-group">
+      <span className="spork-eyebrow">Orchestrator connection</span>
+      <span className="spork-muted" style={{ fontSize: 11 }}>
+        Your existing agent (Claude Code / Copilot / Cursor) drives Spork&rsquo;s
+        timeline via a write-capable <strong>Orchestration MCP</strong> — the
+        &ldquo;Spork Node skill.&rdquo; This is the opposite arrow from a driving
+        model: your agent creates and runs nodes here.
+      </span>
+      <div className="spork-row-between">
+        <span style={{ fontWeight: 600, fontSize: 12 }}>Orchestration MCP</span>
+        <span className="spork-pill-soon">coming (R5)</span>
+      </div>
+      <code className="spork-code-line">
+        claude mcp add spork -- spork-mcp-orchestrate --project &lt;path&gt;
+      </code>
+      <label className="spork-checkbox" title="Enabled with the Orchestration MCP (R5)">
+        <input type="checkbox" disabled /> Allow an external orchestrator to
+        create / run nodes
+      </label>
     </div>
   );
 }
@@ -203,6 +292,9 @@ export function SettingsPopover(): JSX.Element {
   const setDefaultModel = useUiStore((s) => s.setDefaultModel);
   const editorPref = useUiStore((s) => s.editorPref);
   const setEditorPref = useUiStore((s) => s.setEditorPref);
+  const agentProvider = useUiStore((s) => s.agentProvider);
+  const localModels = useUiStore((s) => s.localModels);
+  const models = availableModels(agentProvider, localModels);
 
   function resetPanels(): void {
     const st = useUiStore.getState();
@@ -245,6 +337,8 @@ export function SettingsPopover(): JSX.Element {
 
       <ProviderSection />
 
+      <OrchestratorSection />
+
       <div className="spork-popover-group">
         <span className="spork-eyebrow">Layout</span>
         <button className="btn" onClick={resetPanels}>
@@ -256,17 +350,23 @@ export function SettingsPopover(): JSX.Element {
         <span className="spork-eyebrow">Models</span>
         <div className="spork-row-between">
           <span>Default for new nodes</span>
-          <select
-            value={defaultModel}
-            onChange={(e) => setDefaultModel(e.target.value)}
-            aria-label="Default model for new nodes"
-          >
-            {MODELS.map((m) => (
-              <option key={m} value={m}>
-                {humanizeModel(m)}
-              </option>
-            ))}
-          </select>
+          {models.length === 0 ? (
+            <span className="spork-muted" style={{ fontSize: 12 }}>
+              Configure a provider above
+            </span>
+          ) : (
+            <select
+              value={defaultModel}
+              onChange={(e) => setDefaultModel(e.target.value)}
+              aria-label="Default model for new nodes"
+            >
+              {models.map((m) => (
+                <option key={m} value={m}>
+                  {humanizeModel(m)}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
       </div>
 

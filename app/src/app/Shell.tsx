@@ -24,6 +24,7 @@ import { useUiStore } from "../state/store";
 import { useGraphView } from "../state/queries";
 import { listenOpLog, listenEphemeral, isTauri, type Unlisten } from "../ipc/client";
 import { lastProject, openAndImport, forgetProject } from "./onboarding";
+import { refreshLocalModels } from "./models";
 
 /** The composed shell. */
 export function Shell(): JSX.Element {
@@ -34,6 +35,8 @@ export function Shell(): JSX.Element {
   const setPaletteOpen = useUiStore((s) => s.setPaletteOpen);
   const navCollapsed = useUiStore((s) => s.navCollapsed);
   const detailsCollapsed = useUiStore((s) => s.detailsCollapsed);
+  const navWidth = useUiStore((s) => s.navWidth);
+  const detailsWidth = useUiStore((s) => s.detailsWidth);
   const centerView = useUiStore((s) => s.centerView);
   const density = useUiStore((s) => s.density);
   const connection = useUiStore((s) => s.connection);
@@ -89,6 +92,14 @@ export function Shell(): JSX.Element {
   useEffect(() => {
     document.documentElement.dataset.density = density;
   }, [density]);
+
+  // Probe the configured (or default) local server for its REAL installed models
+  // (no-stub honesty) whenever the provider changes — the selector then offers
+  // only what's actually reachable, never a hardcoded guess.
+  const agentProvider = useUiStore((s) => s.agentProvider);
+  useEffect(() => {
+    void refreshLocalModels();
+  }, [agentProvider]);
 
   // Subscribe to the ordered op-log + ephemeral side-channels; fold each.
   useEffect(() => {
@@ -151,6 +162,10 @@ export function Shell(): JSX.Element {
         className="spork-main"
         data-nav={navCollapsed ? "collapsed" : "expanded"}
         data-details={detailsCollapsed ? "collapsed" : "expanded"}
+        style={{
+          ["--nav-w" as string]: `${navWidth}px`,
+          ["--details-w" as string]: `${detailsWidth}px`,
+        }}
       >
         <Navigator />
         <main className="spork-canvas-region" style={{ minWidth: 0, minHeight: 0 }}>

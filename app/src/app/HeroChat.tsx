@@ -21,7 +21,6 @@ import {
   statusBadge,
 } from "../ui/format";
 import { Icon, type IconName } from "../ui/icons";
-import { Button } from "../ui/Button";
 import { availableModels } from "./TopBar";
 import type { AgentRunIntent, CostView, NodeView } from "../ipc/types";
 
@@ -53,13 +52,16 @@ export function HeroChat(): JSX.Element {
   const setCenterView = useUiStore((s) => s.setCenterView);
   const defaultModel = useUiStore((s) => s.defaultModel);
   const agentProvider = useUiStore((s) => s.agentProvider);
+  const localModels = useUiStore((s) => s.localModels);
+  const setCenterViewToSettings = useUiStore((s) => s.setSettingsOpen);
   const attachAgentNode = useUiStore((s) => s.attachAgentNode);
   const attachEditNode = useUiStore((s) => s.attachEditNode);
   const { run } = useActions();
 
+  const models = availableModels(agentProvider, localModels);
   const [modeId, setModeId] = useState<string>("ask");
   const [prompt, setPrompt] = useState("");
-  const [model, setModel] = useState(defaultModel);
+  const [model, setModel] = useState(defaultModel || models[0] || "");
   const [busy, setBusy] = useState(false);
   const [transcripts, setTranscripts] = useState<Record<string, TranscriptTurn[]>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -181,84 +183,103 @@ export function HeroChat(): JSX.Element {
         </button>
       </header>
 
-      <div className="spork-chat-thread" ref={scrollRef}>
-        <div className="spork-chat-spine" aria-hidden="true" />
+      <div
+        className={`spork-chat-thread${threadNodes.length === 0 ? " spork-chat-thread--empty" : ""}`}
+        ref={scrollRef}
+      >
         {threadNodes.length === 0 ? (
-          <p className="spork-chat-hint spork-muted">This line has no nodes yet — send the first turn below.</p>
+          <div className="spork-chat-welcome">
+            <div className="spork-chat-orb" aria-hidden="true" />
+            <h2 className="spork-chat-greeting">Where shall we begin?</h2>
+            <p className="spork-chat-subtle">
+              Every message becomes a node on <strong>{currentLine.label}</strong> —
+              one you can branch from, inspect, and replay.
+            </p>
+          </div>
         ) : (
-          threadNodes.map((n) =>
-            isConversational(n) ? (
-              <ChatTurn
-                key={n.id}
-                node={n}
-                turns={transcripts[n.id]}
-                selected={n.id === selectedId}
-                onOpen={() => selectNode(n.id)}
-              />
-            ) : (
-              <ChatEvent key={n.id} node={n} onOpen={() => selectNode(n.id)} selected={n.id === selectedId} />
-            ),
-          )
+          <>
+            <div className="spork-chat-spine" aria-hidden="true" />
+            {threadNodes.map((n) =>
+              isConversational(n) ? (
+                <ChatTurn
+                  key={n.id}
+                  node={n}
+                  turns={transcripts[n.id]}
+                  selected={n.id === selectedId}
+                  onOpen={() => selectNode(n.id)}
+                />
+              ) : (
+                <ChatEvent key={n.id} node={n} onOpen={() => selectNode(n.id)} selected={n.id === selectedId} />
+              ),
+            )}
+          </>
         )}
       </div>
 
       <div className="spork-composer">
-        <div className="spork-composer-modes" role="group" aria-label="Agentic mode">
-          {MODES.map((m) => (
-            <button
-              key={m.id}
-              className={`spork-mode${m.id === modeId ? " spork-mode--on" : ""}`}
-              style={{ ["--mc" as string]: m.color }}
-              aria-pressed={m.id === modeId}
-              onClick={() => setModeId(m.id)}
-              title={m.help}
-            >
-              <Icon name={m.icon} size={13} />
-              {m.label}
-            </button>
-          ))}
-        </div>
-        <textarea
-          className="spork-composer-input"
-          rows={3}
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          placeholder={`${activeMode.help}…  (⌘↵ to send)`}
-          aria-label="Message"
-          onKeyDown={(e) => {
-            if ((e.metaKey || e.ctrlKey) && e.key === "Enter") void send();
-          }}
-        />
-        <div className="spork-composer-foot">
-          <label className="spork-composer-model">
-            <Icon name="circle-dot" size={12} />
-            <select value={model} onChange={(e) => setModel(e.target.value)} aria-label="Model">
-              {availableModels(agentProvider).map((m) => (
-                <option key={m} value={m}>{humanizeModel(m)}</option>
+        <div className="spork-composer-card">
+          <textarea
+            className="spork-composer-input"
+            rows={2}
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder={`${activeMode.help}…`}
+            aria-label="Message"
+            onKeyDown={(e) => {
+              if ((e.metaKey || e.ctrlKey) && e.key === "Enter") void send();
+            }}
+          />
+          <div className="spork-composer-bar">
+            <div className="spork-composer-modes" role="group" aria-label="Agentic mode">
+              {MODES.map((m) => (
+                <button
+                  key={m.id}
+                  className={`spork-mode${m.id === modeId ? " spork-mode--on" : ""}`}
+                  style={{ ["--mc" as string]: m.color }}
+                  aria-pressed={m.id === modeId}
+                  onClick={() => setModeId(m.id)}
+                  title={m.help}
+                >
+                  <Icon name={m.icon} size={13} />
+                  {m.label}
+                </button>
               ))}
-            </select>
-          </label>
-          <span className="spork-composer-context spork-muted">
-            {willFork ? (
-              <>
-                <Icon name="git-branch" size={12} /> starts a new line from {shortId(targetId)}
-              </>
+            </div>
+            <div style={{ flex: 1 }} />
+            {models.length === 0 ? (
+              <button className="spork-composer-setup" onClick={() => setCenterViewToSettings(true)}>
+                <Icon name="settings" size={12} /> Set up a model
+              </button>
             ) : (
-              <>creates a {activeMode.label} node on {currentLine.label}</>
+              <label className="spork-composer-model">
+                <select value={model} onChange={(e) => setModel(e.target.value)} aria-label="Model">
+                  {models.map((m) => (
+                    <option key={m} value={m}>{humanizeModel(m)}</option>
+                  ))}
+                </select>
+                <Icon name="chevron-down" size={11} />
+              </label>
             )}
-          </span>
-          <div style={{ flex: 1 }} />
-          <Button
-            variant="primary"
-            size="sm"
-            busy={busy}
-            disabled={!prompt.trim() || targetId === null}
-            className="spork-composer-send"
-            onClick={() => void send()}
-          >
-            <Icon name={activeMode.icon} size={13} /> {activeMode.label}
-          </Button>
+            <button
+              className="spork-composer-send-btn"
+              disabled={!prompt.trim() || targetId === null || models.length === 0 || busy}
+              aria-label={`Send (${activeMode.label})`}
+              title={`${activeMode.label} — ⌘↵`}
+              onClick={() => void send()}
+            >
+              <Icon name={busy ? "loader" : activeMode.icon} size={16} />
+            </button>
+          </div>
         </div>
+        <p className="spork-composer-context spork-muted">
+          {willFork ? (
+            <>
+              <Icon name="git-branch" size={12} /> sending starts a new line from {shortId(targetId)}
+            </>
+          ) : (
+            <>creates a {activeMode.label} node on {currentLine.label} · ⌘↵ to send</>
+          )}
+        </p>
       </div>
     </div>
   );

@@ -259,7 +259,42 @@ export function descriptorFor(kind: string): NodeTypeDescriptor {
   return BUILTIN_DESCRIPTORS[kind] ?? fallbackDescriptor(kind);
 }
 
-/** Every known descriptor, for rendering the legend. */
+/** Every known descriptor (for resolving a kind to its card/legend visuals). */
 export function allDescriptors(): NodeTypeDescriptor[] {
   return Object.values(BUILTIN_DESCRIPTORS);
+}
+
+/**
+ * The node kinds that are meaningful to **create from anywhere**, without any
+ * knowledge of the codebase (REALIGNMENT_PLAN §1, §3a) — the universal agentic
+ * modes. The deterministic action / check / merge / gate kinds are *contextual*:
+ * they only make sense once a human or the orchestrator has studied the project
+ * (its test commands, stress profile, etc.), so they are NOT advertised as
+ * always-available defaults. The legend shows these PLUS whatever kinds actually
+ * exist in the current graph (so a contextual type appears once it's real, never
+ * before) — keeping the legend honest rather than a menu of maybe-meaningless
+ * types.
+ */
+export const CREATABLE_DEFAULT_KINDS: readonly string[] = [
+  "agent-ask",
+  "agent-plan",
+  "agent-explore",
+  "agent-work",
+];
+
+/**
+ * The descriptors to show in the legend: the universal agentic creatables plus
+ * any kind that has at least one instance in the graph (`presentKinds`). This is
+ * honest — it never lists a contextual action/check type until one really exists.
+ */
+export function legendDescriptors(presentKinds: Iterable<string>): NodeTypeDescriptor[] {
+  const present = new Set(presentKinds);
+  const show = new Set<string>([...CREATABLE_DEFAULT_KINDS, ...present]);
+  // Preserve the BUILTIN_DESCRIPTORS order; unknown present kinds get a fallback.
+  const known = allDescriptors().filter((d) => show.has(d.kind));
+  const knownKinds = new Set(known.map((d) => d.kind));
+  const extra = [...present]
+    .filter((k) => !knownKinds.has(k))
+    .map((k) => descriptorFor(k));
+  return [...known, ...extra];
 }

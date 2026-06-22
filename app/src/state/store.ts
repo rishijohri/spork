@@ -152,6 +152,14 @@ export interface UiState {
    * provider form. Set when the user saves a provider in Settings.
    */
   agentProvider: AgentProvider | null;
+  /**
+   * The models actually **detected** on the configured local endpoint (the
+   * server's real model list, probed via `list_local_models`). Empty until a
+   * local provider is configured and reachable — so the selector never advertises
+   * a model that isn't really there (the no-stub honesty fix; the old hardcoded
+   * `llama3.1` is gone).
+   */
+  localModels: string[];
   /** In-flight optimistic mutations by opId. */
   pending: Record<Ulid, PendingOp>;
   /** Buffered ephemeral run/chat output per node (bottom rail / chat tab). */
@@ -174,6 +182,12 @@ export interface UiState {
   detailsCollapsed: boolean;
   /** Bottom rail collapsed to its tab bar. */
   railCollapsed: boolean;
+  /** Left navigator width in px (drag-resizable; clamped). */
+  navWidth: number;
+  /** Right details panel width in px (drag-resizable; clamped). */
+  detailsWidth: number;
+  /** Bottom rail (Activity/Run) expanded height in px (drag-resizable; clamped). */
+  railHeight: number;
   /** Layout density (applies `data-density` on the document element). */
   density: DensityMode;
   /**
@@ -218,6 +232,8 @@ export interface UiState {
   setEditorPref: (editor: string) => void;
   /** Set (or clear) the configured agent provider (P7.5 W3). */
   setAgentProvider: (provider: AgentProvider | null) => void;
+  /** Set the real models detected on the configured local endpoint. */
+  setLocalModels: (models: string[]) => void;
   /**
    * Register an optimistic mutation awaiting reconciliation. `subjectId` is the
    * minted id (the new `nodeId`/`refId`) the tailing op-log event will reference;
@@ -256,6 +272,12 @@ export interface UiState {
   toggleDetails: () => void;
   /** Set the bottom rail collapsed state. */
   setRailCollapsed: (collapsed: boolean) => void;
+  /** Set the left navigator width (px); the caller clamps. */
+  setNavWidth: (px: number) => void;
+  /** Set the right details panel width (px); the caller clamps. */
+  setDetailsWidth: (px: number) => void;
+  /** Set the bottom rail height (px); the caller clamps. */
+  setRailHeight: (px: number) => void;
   /** Set layout density. */
   setDensity: (density: DensityMode) => void;
   /** Toggle a node `kind` in the highlight filter (empty = no filter). */
@@ -311,12 +333,13 @@ function eventSubjectId(event: OpLogEvent): Ulid | null {
 const INITIAL = {
   view: EMPTY_VIEW,
   selectedNodeId: null as Ulid | null,
-  // The default model selector (a `provider/model` key); the top-bar selector
-  // defaults to this and it is one of TopBar's MODELS, and an agent run uses it
-  // as its selector (DESIGN.md §12.3, §14.2).
-  defaultModel: "anthropic/claude-sonnet-4-6",
+  // The default model selector (a `provider/model` key). Empty until a provider
+  // is configured + a real model is detected — the selector shows a
+  // "configure a provider" hint rather than a fake default (no-stub honesty).
+  defaultModel: "",
   editorPref: "",
   agentProvider: null as AgentProvider | null,
+  localModels: [] as string[],
   pending: {} as Record<Ulid, PendingOp>,
   rail: {} as RunRail,
   activity: [] as ActivityEntry[],
@@ -325,6 +348,9 @@ const INITIAL = {
   navCollapsed: false,
   detailsCollapsed: false,
   railCollapsed: false,
+  navWidth: 232,
+  detailsWidth: 360,
+  railHeight: 200,
   density: "comfortable" as DensityMode,
   kindFilter: [] as string[],
   canvasSearch: "",
@@ -352,6 +378,8 @@ export const useUiStore = create<UiState>((set) => ({
   setEditorPref: (editor) => set({ editorPref: editor }),
 
   setAgentProvider: (provider) => set({ agentProvider: provider }),
+
+  setLocalModels: (localModels) => set({ localModels }),
 
   beginOptimistic: (opId, label, subjectId = null) =>
     set((s) => ({
@@ -466,6 +494,10 @@ export const useUiStore = create<UiState>((set) => ({
   toggleDetails: () => set((s) => ({ detailsCollapsed: !s.detailsCollapsed })),
 
   setRailCollapsed: (railCollapsed) => set({ railCollapsed }),
+
+  setNavWidth: (navWidth) => set({ navWidth }),
+  setDetailsWidth: (detailsWidth) => set({ detailsWidth }),
+  setRailHeight: (railHeight) => set({ railHeight }),
 
   setDensity: (density) => set({ density }),
 

@@ -32,7 +32,7 @@ import type {
   TauriEvent,
 } from "./types";
 import { OPLOG_EVENT, EPHEMERAL_EVENT } from "./types";
-import { mockInvoke, mockListen, seedDemoGraph } from "./mock";
+import { mockInvoke, mockListen, mockListLocalModels, seedDemoGraph } from "./mock";
 
 /**
  * Whether a Tauri v2 runtime is present. Tauri v2 injects
@@ -143,6 +143,17 @@ export async function setAgentConfig(config: AgentProviderConfig): Promise<void>
 export async function openInEditor(path: string, editor?: string): Promise<void> {
   if (!TAURI) return;
   await invoke<void>("open_in_editor", { path, editor: editor ?? null });
+}
+
+/**
+ * Discover the models actually installed on a local OpenAI-compatible endpoint
+ * (Ollama / LM Studio / vLLM) — the no-stub honesty path so the selector offers
+ * *real* models, never a hardcoded guess. Returns `[]` if the server is
+ * unreachable or speaks no listing. In browser-mock mode the mock answers.
+ */
+export async function listLocalModels(endpoint: string): Promise<string[]> {
+  if (!TAURI) return mockListLocalModels(endpoint);
+  return invoke<string[]>("list_local_models", { endpoint });
 }
 
 /** A handle that stops an event subscription when called. */

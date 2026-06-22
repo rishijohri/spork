@@ -13,7 +13,7 @@ import { Modal } from "../../ui/Modal";
 import { Button } from "../../ui/Button";
 import { Icon } from "../../ui/icons";
 import { shortId, humanizeModel, formatMicroUsd } from "../../ui/format";
-import { MODELS } from "../TopBar";
+import { availableModels } from "../TopBar";
 import type { AgentRunIntent, CostView, NodeView } from "../../ipc/types";
 
 /** Renders whichever modal the store says is open. */
@@ -75,11 +75,14 @@ function AskAgentModal({
   const close = useClose();
   const { run } = useActions();
   const defaultModel = useUiStore((s) => s.defaultModel);
+  const agentProvider = useUiStore((s) => s.agentProvider);
+  const localModels = useUiStore((s) => s.localModels);
   const attachAgentNode = useUiStore((s) => s.attachAgentNode);
   const attachEditNode = useUiStore((s) => s.attachEditNode);
   const selectNode = useUiStore((s) => s.selectNode);
+  const models = availableModels(agentProvider, localModels);
   const [prompt, setPrompt] = useState("");
-  const [model, setModel] = useState(defaultModel);
+  const [model, setModel] = useState(defaultModel || models[0] || "");
   const [privacy, setPrivacy] = useState("any");
   const [intent, setIntent] = useState<AgentRunIntent>(initialIntent ?? "ask");
   const [busy, setBusy] = useState(false);
@@ -236,13 +239,19 @@ function AskAgentModal({
       </div>
       <div className="spork-field">
         <label htmlFor="agent-model">Model</label>
-        <select id="agent-model" value={model} onChange={(e) => setModel(e.target.value)}>
-          {MODELS.map((m) => (
-            <option key={m} value={m}>
-              {m}
-            </option>
-          ))}
-        </select>
+        {models.length === 0 ? (
+          <span className="spork-muted" style={{ fontSize: 12 }}>
+            No model configured — set up a provider in Settings.
+          </span>
+        ) : (
+          <select id="agent-model" value={model} onChange={(e) => setModel(e.target.value)}>
+            {models.map((m) => (
+              <option key={m} value={m}>
+                {humanizeModel(m)}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
       <div className="spork-field">
         <label htmlFor="agent-intent">Intent</label>
