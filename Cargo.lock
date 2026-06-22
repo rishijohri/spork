@@ -911,6 +911,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 
 [[package]]
+name = "spork-agent"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "spork-cost",
+ "spork-graph",
+ "spork-provider",
+ "spork-transport",
+ "thiserror",
+]
+
+[[package]]
 name = "spork-asset"
 version = "0.1.0"
 dependencies = [
@@ -923,6 +935,19 @@ dependencies = [
  "spork-ignore",
  "tempfile",
  "thiserror",
+]
+
+[[package]]
+name = "spork-baseline"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "spork-canon",
+ "spork-hash",
+ "spork-runner",
+ "thiserror",
+ "ulid",
 ]
 
 [[package]]
@@ -993,6 +1018,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "spork-cost"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "spork-graph",
+]
+
+[[package]]
 name = "spork-daemon"
 version = "0.1.0"
 dependencies = [
@@ -1002,16 +1036,22 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
+ "spork-agent",
  "spork-asset",
+ "spork-baseline",
  "spork-broker",
  "spork-canon",
  "spork-cas",
+ "spork-context",
+ "spork-cost",
  "spork-drift",
  "spork-edges",
  "spork-exec",
+ "spork-gates",
  "spork-git",
  "spork-graph",
  "spork-hash",
+ "spork-history",
  "spork-ignore",
  "spork-ipc",
  "spork-log",
@@ -1019,11 +1059,14 @@ dependencies = [
  "spork-migrate",
  "spork-nodes",
  "spork-projection",
+ "spork-provider",
  "spork-registry",
+ "spork-repomap",
  "spork-restore",
  "spork-runner",
  "spork-status",
  "spork-stream",
+ "spork-transport",
  "spork-vault",
  "tempfile",
  "thiserror",
@@ -1070,6 +1113,20 @@ dependencies = [
  "spork-hash",
  "spork-ignore",
  "tempfile",
+ "thiserror",
+ "ulid",
+]
+
+[[package]]
+name = "spork-gates"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "spork-baseline",
+ "spork-canon",
+ "spork-hash",
+ "spork-runner",
  "thiserror",
  "ulid",
 ]
@@ -1125,6 +1182,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "spork-history"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "ulid",
+]
+
+[[package]]
 name = "spork-ignore"
 version = "0.1.0"
 dependencies = [
@@ -1164,6 +1230,16 @@ dependencies = [
  "spork-migrate",
  "tempfile",
  "thiserror",
+ "ulid",
+]
+
+[[package]]
+name = "spork-memory"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "spork-canon",
  "ulid",
 ]
 
@@ -1248,6 +1324,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "spork-repomap"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "spork-restore"
 version = "0.1.0"
 dependencies = [
@@ -1303,6 +1387,15 @@ dependencies = [
  "tempfile",
  "thiserror",
  "ulid",
+]
+
+[[package]]
+name = "spork-transport"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]

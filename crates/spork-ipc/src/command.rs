@@ -21,6 +21,7 @@
 //! | [`Command::BranchMerge`]  | `branch.merge`  | mutation |
 //! | [`Command::GitExport`]    | `git.export`    | action (inline) |
 //! | [`Command::GitPush`]      | `git.push`      | action (inline) |
+//! | [`Command::NodeAgentRun`] | `node.agentRun` | mutation |
 //!
 //! `NodeRunCheck`/`BranchMerge` are P5 additions (DESIGN.md §6.5, §8.1, §8.2):
 //! running an observing check against a node, and merging a branch via 3-way
@@ -63,6 +64,38 @@ use ulid::Ulid;
 /// optional field). A breaking change would instead introduce a *new* command
 /// generation rather than mutate this one in place (CLAUDE.md C2).
 pub const COMMAND_SCHEMA_VERSION: u16 = 1;
+
+/// The intent of an agent turn.
+///
+/// `Ask`/`Plan`/`Analysis` are **read-only** (analysis/planning/asking): they
+/// invoke a model for context about a node and **attach** the answer as an
+/// observing context node via [`Command::NodeAgentRun`] — they never change code,
+/// so they auto-*attach* (a dotted edge, no branch) rather than fork (DESIGN.md
+/// §6.6). `Change` is the **code-changing** intent driven by
+/// [`Command::NodeAgentEdit`]: the agent edits a CoW copy of the code and the
+/// result is an Edit node that owns a snapshot and forks-on-divergence. The
+/// *trusted-local* edit loop runs on the shipped `WorktreeCow` tier and is wired
+/// in P7.5 (docs/MVP_PLAN.md W4); only *untrusted-marketplace* executor isolation
+/// (microVM/WASM) is P8. The enum is `#[non_exhaustive]` so further intents stay
+/// additive.
+///
+/// Serializes `snake_case` (`"ask"`, `"plan"`, `"analysis"`, `"change"`) to match
+/// the wire conventions of the surrounding command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum AgentRunIntent {
+    /// A free-form question about the node ("what does this do?").
+    #[default]
+    Ask,
+    /// Ask the model to produce a plan for changing the node (no change applied).
+    Plan,
+    /// Ask the model to analyze the node (review, summarize, audit).
+    Analysis,
+    /// Ask the agent to **change** the code (P7.5 MVP, trusted-local edit loop):
+    /// it edits a CoW copy and produces an Edit node owning the mutated snapshot.
+    Change,
+}
 
 /// A typed request from the renderer to the daemon.
 ///
@@ -259,6 +292,156 @@ pub enum Command {
         /// The remote to push to, or `None` to default to `origin`.
         remote: Option<String>,
     },
+
+    /// Run a **read-only** agent turn against a node (P6, DESIGN.md §6.6, §12.1,
+    /// §12.3, §12.5). A *mutation*: returns an `op_id`; the daemon resolves the
+    /// model through the multi-provider router (enforcing privacy), invokes it
+    /// over the configured transport, prices the turn, and **attaches** the
+    /// answer as an observing context node to the target via a dotted
+    /// [`DerivedFrom`](spork_graph::EdgeType::DerivedFrom) edge — recording the
+    /// model + cost on that node and emitting
+    /// [`OpLogEvent::NodeCreated`](crate::OpLogEvent::NodeCreated) +
+    /// [`OpLogEvent::EdgeAdded`](crate::OpLogEvent::EdgeAdded). The target is
+    /// never mutated and no branch is forked — a read-only run *attaches*
+    /// (DESIGN.md §6.6). Appended after the frozen variants, so their wire form is
+    /// unchanged (CLAUDE.md C2/C3).
+    NodeAgentRun {
+        /// The node the run observes / asks about. Its snapshot is never mutated;
+        /// the answer attaches as an observing context child (DESIGN.md §6.6).
+        target_node_id: Ulid,
+        /// The user's prompt for this turn.
+        prompt: String,
+        /// The model selector key: `"provider/model"` (e.g. `"openai/gpt-4o"`,
+        /// `"local/llama3.1"`), a bare model name (routes to the default
+        /// provider), or empty for the router's default. A free string so a new
+        /// provider/model needs no contract change (CLAUDE.md C3).
+        model_key: String,
+        /// The node's privacy class, as its `snake_case` token (`"any"`,
+        /// `"local_only"`, `"no_third_party_aggregator"`), or empty for `"any"`.
+        /// The router refuses a resolution this class forbids (DESIGN.md §12.5).
+        privacy: String,
+        /// The read-only intent of the run (DESIGN.md §6.6).
+        intent: AgentRunIntent,
+    },
+
+    /// Merge a branch through a **quality gate** (P7, DESIGN.md §8.3, A.4). A
+    /// *mutation*: the daemon performs the 3-way merge, re-runs observers against
+    /// the merged snapshot, evaluates `gate` against those **post-merge** results
+    /// (and an optional pinned `baseline`), and attaches an immutable gate-verdict
+    /// node. The `into_ref` is promoted to the merge node only when the verdict
+    /// allows the transition; a blocked verdict leaves the merge node as an
+    /// unpromoted candidate unless `override_reason` is supplied — an override
+    /// produces a visible audit node (DESIGN.md §8.3). Appended after the frozen
+    /// variants so their wire form is unchanged (CLAUDE.md C2/C3).
+    BranchMergeGated {
+        /// The ref the merge result lands on (promoted only if the gate allows).
+        into_ref: String,
+        /// The node carrying the changes being merged in.
+        from_node_id: Ulid,
+        /// An optional pre-supplied conflict resolution (as for [`Command::BranchMerge`]).
+        resolution: Option<serde_json::Value>,
+        /// The serialized `spork-gates` `GatePolicy` to evaluate post-merge. A
+        /// free JSON value so the predicate grammar can evolve without a contract
+        /// change (CLAUDE.md C3).
+        gate: serde_json::Value,
+        /// An optional serialized `spork-baseline` `Baseline` the gate compares
+        /// against. `None` runs the gate with no baseline (only baseline-free
+        /// predicates can hold).
+        baseline: Option<serde_json::Value>,
+        /// When the gate blocks, an operator's reason to override it (recorded as
+        /// an audit node). `None` leaves a blocked merge unpromoted.
+        override_reason: Option<String>,
+    },
+
+    /// Check out a historical node into the working tree, applying the
+    /// fork-on-divergence policy (P7, DESIGN.md §6.6). A *mutation*: returns an
+    /// `op_id`. Checking out a branch *tip* moves its ref; checking out a
+    /// *non-tip* node auto-forks a new branch at that node so the line is never
+    /// silently overwritten — emitting
+    /// [`OpLogEvent::CheckoutPerformed`](crate::OpLogEvent::CheckoutPerformed) and
+    /// (on a fork) [`OpLogEvent::BranchForked`](crate::OpLogEvent::BranchForked) /
+    /// [`OpLogEvent::RefCreated`](crate::OpLogEvent::RefCreated).
+    NodeCheckout {
+        /// The node to check out.
+        node_id: Ulid,
+    },
+
+    /// Compile a node's lineage-aware context (P7, DESIGN.md §13.2, §13.3). A
+    /// **read**: returns [`CommandResult::Read`](crate::CommandResult::Read) inline
+    /// with the compiled layers, the stable `prefix_hash`, and the
+    /// `SelectionDecision` trace explaining every ancestor inclusion/drop; emits no
+    /// events.
+    NodeContext {
+        /// The node whose context to compile.
+        node_id: Ulid,
+    },
+
+    /// Generate a node's regenerable handoff document (P7, DESIGN.md §13.5). A
+    /// **read**: returns [`CommandResult::Read`](crate::CommandResult::Read) inline
+    /// with the distilled handoff so a fresh agent can start cold; emits no events.
+    NodeHandoff {
+        /// The node whose handoff to generate.
+        node_id: Ulid,
+    },
+
+    /// Query the read-only Lineage/History MCP surface (P7, DESIGN.md §13.7). A
+    /// **read**: `request` is a JSON-RPC 2.0 request for the History MCP server
+    /// (`tools/list`, `tools/call`, …); the reply rides
+    /// [`CommandResult::Read`](crate::CommandResult::Read) inline. Read-only and
+    /// auto lineage-scoped; emits no events.
+    HistoryQuery {
+        /// The JSON-RPC request object for the History MCP server.
+        request: serde_json::Value,
+    },
+
+    /// Import the daemon's working tree into a **root snapshot node** so a freshly
+    /// opened project renders its code on the canvas (P7.5 MVP, DESIGN.md §10.1,
+    /// §6.2, A.7 C-2). A *mutation*: the daemon content-addresses the working tree
+    /// (honoring the ignore profile), creates a parentless snapshot-owning node on
+    /// `branch_id`, and points the branch ref + `HEAD` at it — emitting
+    /// [`OpLogEvent::NodeCreated`](crate::OpLogEvent::NodeCreated) and the ref
+    /// events, and returning the new `nodeId`. Unlike
+    /// [`Command::NodeCreate`](Command::NodeCreate) (which the renderer cannot call
+    /// for a root because it cannot mint a content hash), the daemon captures the
+    /// tree itself. Re-import dedups by content hash (an unchanged tree yields the
+    /// same snapshot). Appended after the frozen variants, so their wire form is
+    /// unchanged (CLAUDE.md C2/C3).
+    ProjectImport {
+        /// The branch ref the root node is created on (empty defaults to `"main"`).
+        branch_id: String,
+        /// The snapshot origin token (`"import"` for ingested external state,
+        /// `"manual"` for a user-requested capture; empty defaults to `"import"`).
+        /// A free string so the origin set can grow without a contract change
+        /// (CLAUDE.md C3); the daemon maps it to a `spork-nodes` `SnapshotOrigin`.
+        origin: String,
+    },
+
+    /// Run a **code-changing** agent turn against a node (P7.5 MVP, the trusted
+    /// edit loop — docs/MVP_PLAN.md W4; DESIGN.md §6.6, §8.2, §9.2, §11.1). A
+    /// *mutation*: the daemon provisions a **CoW copy** of the target's snapshot
+    /// on the shipped `WorktreeCow` tier (the user's real checkout is never
+    /// touched), runs a bounded agent tool-loop (read/write/list/run-command/
+    /// apply-patch) against that copy, captures the mutated tree into a new
+    /// snapshot, creates a `codebase-edit` node owning it (parented on the target),
+    /// applies §6.6 fork-on-divergence (continue a tip / auto-fork a non-tip), and
+    /// auto-runs a change-scoped Sanity check. Kept **separate** from the frozen
+    /// read-only [`Command::NodeAgentRun`] so that command's attach-a-context-node
+    /// semantics are untouched (CLAUDE.md C2). Returns
+    /// `{ editNodeId, branchId, forked, model, costMicroUsd, sanity }`. Appended
+    /// after the frozen variants, so their wire form is unchanged (CLAUDE.md C2/C3).
+    NodeAgentEdit {
+        /// The node whose snapshot the agent edits a CoW copy of. Its snapshot is
+        /// never mutated in place; the Edit node owns the *new* captured snapshot.
+        target_node_id: Ulid,
+        /// The user's instruction for the change.
+        prompt: String,
+        /// The model selector key (`"provider/model"`, a bare name, or empty for
+        /// the router default), as for [`Command::NodeAgentRun`].
+        model_key: String,
+        /// The target's privacy class token (`"any"` | `"local_only"` |
+        /// `"no_third_party_aggregator"`, or empty for `"any"`).
+        privacy: String,
+    },
 }
 
 impl Command {
@@ -279,6 +462,9 @@ impl Command {
                 | Command::BlobRead { .. }
                 | Command::GitExport { .. }
                 | Command::GitPush { .. }
+                | Command::NodeContext { .. }
+                | Command::NodeHandoff { .. }
+                | Command::HistoryQuery { .. }
         )
     }
 }
@@ -332,6 +518,32 @@ mod tests {
                 from_node_id: b,
                 resolution: Some(serde_json::json!({"hunks": []})),
             },
+            Command::NodeAgentRun {
+                target_node_id: a,
+                prompt: "what does this module do?".into(),
+                model_key: "openai/gpt-4o".into(),
+                privacy: "any".into(),
+                intent: AgentRunIntent::Ask,
+            },
+            Command::BranchMergeGated {
+                into_ref: "main".into(),
+                from_node_id: b,
+                resolution: None,
+                gate: serde_json::json!({"id": "g1"}),
+                baseline: Some(serde_json::json!({"id": "b1"})),
+                override_reason: Some("hotfix".into()),
+            },
+            Command::NodeCheckout { node_id: a },
+            Command::ProjectImport {
+                branch_id: "main".into(),
+                origin: "import".into(),
+            },
+            Command::NodeAgentEdit {
+                target_node_id: a,
+                prompt: "add a retry".into(),
+                model_key: "cli/copilot-cli".into(),
+                privacy: "any".into(),
+            },
         ]
     }
 
@@ -345,6 +557,11 @@ mod tests {
             Command::BlobRead {
                 tree_hash: hash_bytes(b"t"),
                 path: "src/main.rs".into(),
+            },
+            Command::NodeContext { node_id: a },
+            Command::NodeHandoff { node_id: a },
+            Command::HistoryQuery {
+                request: serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}),
             },
         ]
     }
@@ -475,6 +692,84 @@ mod tests {
         assert_eq!(mv["intoRef"], "main");
         assert_eq!(mv["fromNodeId"], from.to_string());
         assert!(mv["resolution"].is_null());
+    }
+
+    #[test]
+    fn node_agent_run_uses_tagged_camel_case_wire_form() {
+        let target = Ulid::new();
+        let cmd = Command::NodeAgentRun {
+            target_node_id: target,
+            prompt: "explain".into(),
+            model_key: "local/llama3.1".into(),
+            privacy: "local_only".into(),
+            intent: AgentRunIntent::Analysis,
+        };
+        let v = serde_json::to_value(&cmd).unwrap();
+        assert_eq!(v["command"], "NODE_AGENT_RUN");
+        assert_eq!(v["targetNodeId"], target.to_string());
+        assert_eq!(v["modelKey"], "local/llama3.1");
+        assert_eq!(v["privacy"], "local_only");
+        // The intent serializes snake_case.
+        assert_eq!(v["intent"], "analysis");
+    }
+
+    #[test]
+    fn project_import_uses_tagged_camel_case_wire_form_and_is_a_mutation() {
+        let cmd = Command::ProjectImport {
+            branch_id: "main".into(),
+            origin: "import".into(),
+        };
+        let v = serde_json::to_value(&cmd).unwrap();
+        assert_eq!(v["command"], "PROJECT_IMPORT");
+        assert_eq!(v["branchId"], "main");
+        assert_eq!(v["origin"], "import");
+        // Importing mints a root node, so it is a mutation (returns an op_id).
+        assert!(cmd.is_mutation());
+    }
+
+    #[test]
+    fn node_agent_run_is_a_mutation() {
+        assert!(Command::NodeAgentRun {
+            target_node_id: Ulid::new(),
+            prompt: String::new(),
+            model_key: String::new(),
+            privacy: String::new(),
+            intent: AgentRunIntent::default(),
+        }
+        .is_mutation());
+    }
+
+    #[test]
+    fn agent_run_intent_round_trips_and_defaults_to_ask() {
+        assert_eq!(AgentRunIntent::default(), AgentRunIntent::Ask);
+        for (intent, tag) in [
+            (AgentRunIntent::Ask, "\"ask\""),
+            (AgentRunIntent::Plan, "\"plan\""),
+            (AgentRunIntent::Analysis, "\"analysis\""),
+            (AgentRunIntent::Change, "\"change\""),
+        ] {
+            assert_eq!(serde_json::to_string(&intent).unwrap(), tag);
+            let back: AgentRunIntent = serde_json::from_str(tag).unwrap();
+            assert_eq!(back, intent);
+        }
+    }
+
+    #[test]
+    fn node_agent_edit_uses_tagged_camel_case_wire_form_and_is_a_mutation() {
+        let target = Ulid::new();
+        let cmd = Command::NodeAgentEdit {
+            target_node_id: target,
+            prompt: "add a retry".into(),
+            model_key: "cli/copilot-cli".into(),
+            privacy: "any".into(),
+        };
+        let v = serde_json::to_value(&cmd).unwrap();
+        assert_eq!(v["command"], "NODE_AGENT_EDIT");
+        assert_eq!(v["targetNodeId"], target.to_string());
+        assert_eq!(v["modelKey"], "cli/copilot-cli");
+        assert_eq!(v["privacy"], "any");
+        // The code-changing edit mints an Edit node, so it is a mutation.
+        assert!(cmd.is_mutation());
     }
 
     #[test]

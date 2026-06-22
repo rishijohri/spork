@@ -48,6 +48,13 @@ export type EdgeType =
 /** spork-edges RefKind: serde default (PascalCase) — `"Head" | "Branch" | "Tag"`. */
 export type RefKind = "Head" | "Branch" | "Tag";
 
+/**
+ * spork-ipc AgentRunIntent: serde `snake_case`. The read-only P6 intents
+ * (`ask`/`plan`/`analysis`) plus the P7.5 code-changing `change` intent (driven
+ * by `NODE_AGENT_EDIT`).
+ */
+export type AgentRunIntent = "ask" | "plan" | "analysis" | "change";
+
 // --- View-model (crates/spork-daemon/src/view.rs) -----------------------------
 
 /** The renderer-facing projection of one node (a card on the canvas). */
@@ -63,6 +70,55 @@ export interface NodeView {
   branchId: string;
   parentIds: Ulid[];
   model: string | null;
+  /** The per-node cost (P6), or null. The per-branch ledger sums these. */
+  cost: CostView | null;
+  /** The gate verdict this node carries (P7, gate nodes only), or null. */
+  gate: GateVerdictView | null;
+  /**
+   * The per-type **presentation status** (R2, REALIGNMENT_PLAN.md §3b) — the
+   * rich agentic state (`thinking`/`awaiting_input`/`require_review`/…) the
+   * frozen `Lifecycle` can't represent. `null` until the R3 producer emits it;
+   * the badge falls back to the lifecycle status when absent.
+   */
+  presentationStatus: string | null;
+  /**
+   * A friendly label for this node's **line** (lane) — the emergent line a
+   * `branchId` denotes, never user-facing git chrome (R2). `null` only for an
+   * empty id.
+   */
+  lineLabel: string | null;
+  /**
+   * The node this line **forked from** — set iff this node starts a new line
+   * (its `branchId` differs from its first parent's), so the canvas can draw the
+   * fork connector between lanes (R2). `null` for a node continuing its line.
+   */
+  forkedFrom: Ulid | null;
+}
+
+/** The renderer-facing projection of a gate verdict (P7, DESIGN §8.3). */
+export interface GateVerdictView {
+  policyId: string;
+  /** The gated transition (`merge`, `promote-branch`, …). */
+  transition: string;
+  /** `pass` | `warn` | `blocked` | `overridden`. */
+  decision: "pass" | "warn" | "blocked" | "overridden";
+  /** `block` | `warn`. */
+  severity: "block" | "warn";
+  reasons: string[];
+  /** The lineage hash of the snapshot the verdict was computed against (hex). */
+  lineageHash: string;
+  /** Whether the verdict was overridden (a visible audit). */
+  overridden: boolean;
+}
+
+/** The renderer-facing projection of a node's cost (P6, DESIGN §12.5). */
+export interface CostView {
+  /** Total prompt/input tokens (uncached + cache read + write). */
+  inputTokens: number;
+  /** Completion/output tokens produced. */
+  outputTokens: number;
+  /** Total spend in micro-USD (millionths of a dollar), as an integer. */
+  microUsd: number;
 }
 
 /** The renderer-facing projection of one typed edge. */
@@ -122,7 +178,62 @@ export type Command =
   // casing matches the Rust serde `rename_all_fields = "camelCase"` (nodeId,
   // branch / nodeId, remote); the `Option<String>` fields are `string | null`.
   | { command: "GIT_EXPORT"; nodeId: Ulid; branch: string | null }
-  | { command: "GIT_PUSH"; nodeId: Ulid; remote: string | null };
+  | { command: "GIT_PUSH"; nodeId: Ulid; remote: string | null }
+  // P6 read-only agent run (DESIGN.md §6.6, §12.x). A mutation: resolves the
+  // model through the multi-provider router (privacy enforced), invokes it over a
+  // transport, prices the turn, and attaches the answer as a context node by a
+  // dotted DERIVED_FROM edge — recording model + cost. `modelKey` is the selector
+  // ("provider/model", a bare name, or "" for the router default); `privacy` is
+  // the snake_case class token ("any" | "local_only" | "no_third_party_aggregator").
+  | {
+      command: "NODE_AGENT_RUN";
+      targetNodeId: Ulid;
+      prompt: string;
+      modelKey: string;
+      privacy: string;
+      intent: AgentRunIntent;
+    }
+  // P7 gated merge (DESIGN.md §8.3, A.4). A mutation: 3-way merge → re-run
+  // observers → evaluate `gate` (a serialized spork-gates GatePolicy) vs the
+  // optional `baseline` (a serialized spork-baseline Baseline) → attach a gate
+  // verdict node and promote the ref only if allowed. `overrideReason` promotes
+  // a blocked merge with a recorded audit.
+  | {
+      command: "BRANCH_MERGE_GATED";
+      intoRef: string;
+      fromNodeId: Ulid;
+      resolution: unknown | null;
+      gate: unknown;
+      baseline: unknown | null;
+      overrideReason: string | null;
+    }
+  // P7 historical checkout with fork-on-divergence (DESIGN.md §6.6). A mutation.
+  | { command: "NODE_CHECKOUT"; nodeId: Ulid }
+  // P7 reads (DESIGN.md §13.x). NODE_CONTEXT compiles lineage-aware context;
+  // NODE_HANDOFF distills a handoff; HISTORY_QUERY is a JSON-RPC request to the
+  // read-only Lineage/History MCP. All reply inline as `READ`.
+  | { command: "NODE_CONTEXT"; nodeId: Ulid }
+  | { command: "NODE_HANDOFF"; nodeId: Ulid }
+  | { command: "HISTORY_QUERY"; request: unknown }
+  // P7.5 MVP import (docs/MVP_PLAN.md W1, DESIGN.md §10.1, §6.2, A.7 C-2). A
+  // mutation: the daemon captures its working tree into a root snapshot node and
+  // points the branch ref + HEAD at it, so a freshly opened project renders its
+  // code. `origin` is the snapshot origin token ("import" | "manual"); `branchId`
+  // defaults to "main" when empty.
+  | { command: "PROJECT_IMPORT"; branchId: string; origin: string }
+  // P7.5 MVP code-changing edit (docs/MVP_PLAN.md W4, DESIGN.md §6.6, §9.2). A
+  // mutation: the daemon runs the trusted edit loop against a CoW copy of the
+  // target's snapshot (the real checkout is never touched) and creates a
+  // `codebase-edit` node owning the mutated snapshot, applying §6.6
+  // fork-on-divergence + auto-Sanity. The Edit node arrives over the op-log; the
+  // reply ids carry `{ editNodeId, branchId, forked, model, costMicroUsd, sanity }`.
+  | {
+      command: "NODE_AGENT_EDIT";
+      targetNodeId: Ulid;
+      prompt: string;
+      modelKey: string;
+      privacy: string;
+    };
 
 /** The command tag literal type, for exhaustive switching. */
 export type CommandTag = Command["command"];
@@ -139,7 +250,10 @@ export type CommandResult =
   // are action-shaped, not mutations): the branch the snapshot was projected to,
   // the commit SHA, and whether it was pushed. Field casing matches the Rust
   // serde `rename_all_fields = "camelCase"` (commitSha).
-  | { result: "GIT"; branch: string; commitSha: string; pushed: boolean };
+  | { result: "GIT"; branch: string; commitSha: string; pushed: boolean }
+  // The reply to the P7 read commands NODE_CONTEXT / NODE_HANDOFF /
+  // HISTORY_QUERY: structured read-only JSON returned inline (DESIGN.md §13.x).
+  | { result: "READ"; data: unknown };
 
 // --- Op-log events (crates/spork-ipc/src/event.rs) ----------------------------
 //
@@ -159,7 +273,10 @@ export type OpLogEvent =
   | { type: "GC_PERFORMED"; seq: number }
   | { type: "RESULT_RECORDED"; seq: number; runId: Ulid; nodeId: Ulid }
   | { type: "MERGE_PERFORMED"; seq: number; nodeId: Ulid }
-  | { type: "CHECK_SCHEDULED"; seq: number; runId: Ulid };
+  | { type: "CHECK_SCHEDULED"; seq: number; runId: Ulid }
+  // P7 additive events (DESIGN.md §8.3, §6.6).
+  | { type: "GATE_EVALUATED"; seq: number; nodeId: Ulid }
+  | { type: "CHECKOUT_PERFORMED"; seq: number; nodeId: Ulid };
 
 /** The op-log event tag literal type. */
 export type OpLogEventTag = OpLogEvent["type"];

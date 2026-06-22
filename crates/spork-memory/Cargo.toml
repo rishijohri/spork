@@ -1,0 +1,13 @@
+[package]
+name = "spork-memory"
+version = "0.1.0"
+edition = "2021"
+description = "Spork P7 memory store: project/lineage/node-scoped memory with provenance, TTL, usage decay, pinning, and vector-similarity recall (DESIGN §13.6)."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+ulid = { workspace = true, features = ["serde"] }
+
+[dev-dependencies]
+spork-canon = { path = "../spork-canon" }

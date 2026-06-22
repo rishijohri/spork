@@ -152,6 +152,81 @@ fn descriptor_owns_snapshot_without_snapshot_ref_is_refused_at_registration() {
     ));
 }
 
+// ---- P6: per-node model + cost attribution from the payload ------------------
+
+#[test]
+fn create_node_materializes_payload_model_and_cost() {
+    let mut h = Harness::new();
+    // An agent-run attaches a non-snapshot context node carrying its model and
+    // the priced cost of the turn in its payload; P6 lifts both into the
+    // materialized envelope (model already in F2, cost via the projection fold).
+    h.svc
+        .register_descriptor(context_descriptor("agent-run", Version::new(1, 0, 0)))
+        .unwrap();
+    let env = h
+        .svc
+        .create_node(
+            "agent-run",
+            None,
+            vec![],
+            "main",
+            json!({
+                "model": "openai/gpt-4o",
+                "cost": { "input_tokens": 1000, "output_tokens": 200, "micro_usd": 4500 }
+            }),
+            false,
+            None,
+        )
+        .unwrap();
+    assert_eq!(env.model.as_deref(), Some("openai/gpt-4o"));
+    let cost = env.cost.clone().expect("cost materialized from payload");
+    assert_eq!(cost.input_tokens, 1000);
+    assert_eq!(cost.output_tokens, 200);
+    assert_eq!(cost.micro_usd, 4500);
+
+    // The cost survives a projection rebuild bit-for-bit (the pure-projection
+    // property: the cost lives inside the canonical payload, re-extracted on fold).
+    let rebuilt = h.rebuild();
+    let again = rebuilt.get_node(env.id).unwrap().unwrap();
+    assert_eq!(again.cost, env.cost);
+    assert_eq!(again.model, env.model);
+}
+
+#[test]
+fn create_node_without_cost_leaves_cost_none() {
+    let mut h = Harness::new();
+    h.svc.register_builtin_snapshot().unwrap();
+    let env = make_snapshot(&mut h.svc, vec![], b"t");
+    assert!(
+        env.cost.is_none(),
+        "a node with no payload cost has no cost record"
+    );
+}
+
+#[test]
+fn create_node_with_malformed_cost_leaves_cost_none() {
+    let mut h = Harness::new();
+    h.svc
+        .register_descriptor(context_descriptor("agent-run", Version::new(1, 0, 0)))
+        .unwrap();
+    // A `cost` that is not a valid CostRecord is ignored (left null), never stored
+    // as garbage — the extraction round-trips through CostRecord first.
+    let env = h
+        .svc
+        .create_node(
+            "agent-run",
+            None,
+            vec![],
+            "main",
+            json!({ "model": "x", "cost": "not-a-record" }),
+            false,
+            None,
+        )
+        .unwrap();
+    assert!(env.cost.is_none());
+    assert_eq!(env.model.as_deref(), Some("x"));
+}
+
 #[test]
 fn create_node_owns_snapshot_without_hash_is_rejected() {
     let mut h = Harness::new();

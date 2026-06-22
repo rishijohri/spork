@@ -37,6 +37,25 @@ spork-exec = { path = "../spork-exec" }
 spork-runner = { path = "../spork-runner" }
 spork-merge = { path = "../spork-merge" }
 spork-nodes = { path = "../spork-nodes" }
+# P6: `node.agentRun` resolves a model through the multi-provider router, invokes
+# it over a transport, prices the turn, and attaches the answer (DESIGN §6.6,
+# §12.x). The router/adapters/privacy live in spork-provider, the agent loop in
+# spork-agent, the I/O channel in spork-transport, and cache-aware pricing in
+# spork-cost.
+spork-provider = { path = "../spork-provider" }
+spork-agent = { path = "../spork-agent" }
+spork-transport = { path = "../spork-transport" }
+spork-cost = { path = "../spork-cost" }
+# P7: gated merges evaluate a GatePolicy against post-merge results vs a
+# baseline (spork-gates + spork-baseline); the context panel compiles
+# lineage-aware context + handoff (spork-context); the read-only Lineage/History
+# MCP answers over the DAG + transcripts (spork-history). All additive consumers
+# of frozen seams (DESIGN §8.3, §13.x, A.4).
+spork-gates = { path = "../spork-gates" }
+spork-baseline = { path = "../spork-baseline" }
+spork-context = { path = "../spork-context" }
+spork-repomap = { path = "../spork-repomap" }
+spork-history = { path = "../spork-history" }
 
 ulid = { workspace = true, features = ["serde"] }
 serde = { workspace = true }
@@ -63,3 +82,7 @@ proptest = { workspace = true }
 # The headless DoD tests open a real git repo fixture to prove export_to_git
 # leaves .git/HEAD/index/working-tree byte-unchanged.
 git2 = { workspace = true }
+# The P7 DoD tests build typed GatePolicy / Baseline values to drive the gated
+# merge through the frozen IPC seam.
+spork-gates = { path = "../spork-gates" }
+spork-baseline = { path = "../spork-baseline" }

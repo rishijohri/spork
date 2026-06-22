@@ -22,7 +22,7 @@ const NODE = "00000000000000000000000001";
 
 function fixtureView(): GraphView {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     nodes: [
       {
         id: NODE,
@@ -35,6 +35,11 @@ function fixtureView(): GraphView {
         branchId: "main",
         parentIds: [],
         model: "claude-sonnet-4-6",
+        cost: null,
+        gate: null,
+        presentationStatus: null,
+        lineLabel: "main",
+        forkedFrom: null,
       },
     ],
     edges: [],

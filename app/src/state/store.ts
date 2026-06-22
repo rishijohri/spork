@@ -16,7 +16,14 @@
 // stream — never the mutation's return value.
 
 import { create } from "zustand";
-import type { EphemeralFrame, GraphView, OpLogEvent, Ulid } from "../ipc/types";
+import type {
+  AgentRunIntent,
+  EphemeralFrame,
+  GraphView,
+  NodeView,
+  OpLogEvent,
+  Ulid,
+} from "../ipc/types";
 import { applyOpLogEvent, EMPTY_VIEW } from "./reducer";
 
 /** A pending optimistic mutation awaiting its op-log reconciliation. */
@@ -60,6 +67,72 @@ export interface ActivityEntry {
 /** How many activity entries the bounded log retains (oldest dropped first). */
 export const ACTIVITY_LOG_LIMIT = 100;
 
+/** Daemon connection state, shown by the top-bar dot + status sub-strip (§5.12). */
+export type ConnectionState =
+  | "connected"
+  | "reconnecting"
+  | "disconnected"
+  // First-run: the daemon is alive but no project is open yet (graph_view
+  // returns "no project open"). Distinct from a real disconnection so onboarding
+  // shows instead of an alarming "Lost connection" banner.
+  | "no-project"
+  | "mock";
+
+/** Layout density (Settings → §5.13). */
+export type DensityMode = "comfortable" | "compact";
+
+/**
+ * The modal currently open, if any (UI_UX_DESIGN.md §5.10/§5.13). A discriminated
+ * union so any component can request a modal and the Shell renders exactly one.
+ * Every variant maps to a BUILT (🟢) command or local action — no forward-map
+ * surface appears here.
+ */
+export type AppModal =
+  // Merge a line into another line (R2: branching is automatic — there is no
+  // manual "new branch"; a merge targets a lane *tip node*, REALIGNMENT_PLAN §5a).
+  | { kind: "merge"; nodeId: Ulid }
+  | { kind: "restore"; nodeId: Ulid }
+  | { kind: "commit"; nodeId: Ulid }
+  | { kind: "push"; nodeId: Ulid }
+  | { kind: "gc" }
+  | { kind: "settings" }
+  /**
+   * Ask the agent about a node (P6 read-only run → attached context node). An
+   * optional `intent` pre-selects the agentic mode (ask/plan/analysis/change)
+   * when opened from a "+ New node ▾" agentic item (R2).
+   */
+  | { kind: "askAgent"; nodeId: Ulid; intent?: AgentRunIntent }
+  /** A denied capability surfaced honestly (§5.10e); inline grant is forward-map. */
+  | { kind: "capability"; capability: string; action: string };
+
+/**
+ * An open context menu anchored at a screen point (§5.11). The `branch` variant
+ * is gone (R2): branching is automatic, so there is no per-branch right-click
+ * surface — lanes are focused, never managed (REALIGNMENT_PLAN §5a).
+ */
+export type ContextMenu = { kind: "node"; nodeId: Ulid; x: number; y: number };
+
+/** Which surface fills the center region: the DAG canvas or the hero chat. Two
+ * views of the *same* node substrate (REALIGNMENT_PLAN §5b). */
+export type CenterView = "canvas" | "chat";
+
+/**
+ * The configured agent provider the user picked in Settings (P7.5 MVP, W3).
+ * `null` means the daemon default (the local OpenAI-compatible endpoint), so the
+ * default backed provider is `"local"`. The model selector gates on this so it
+ * never offers a provider that is not actually configured.
+ */
+export type AgentProvider = {
+  /** `"local"` (HTTP endpoint) or `"cli"` (subprocess agent). */
+  kind: "local" | "cli";
+  /** The local OpenAI-compatible endpoint URL (when `kind === "local"`). */
+  endpoint?: string;
+  /** The CLI agent program (when `kind === "cli"`). */
+  command?: string;
+  /** The CLI agent args (when `kind === "cli"`). */
+  args?: string[];
+};
+
 export interface UiState {
   /** The live, reduced view-model. */
   view: GraphView;
@@ -67,6 +140,26 @@ export interface UiState {
   selectedNodeId: Ulid | null;
   /** The default model the top-bar selector applies to new nodes. */
   defaultModel: string;
+  /**
+   * The preferred external editor launcher for "Open in editor" (R2,
+   * REALIGNMENT_PLAN §5d), e.g. `code`/`cursor`/`subl`/`idea`. Empty = let the
+   * daemon auto-detect one on PATH, falling back to the OS opener.
+   */
+  editorPref: string;
+  /**
+   * The configured agent provider (P7.5 W3), or null for the daemon default
+   * (local endpoint). Drives the model-selector gating and prefills the Settings
+   * provider form. Set when the user saves a provider in Settings.
+   */
+  agentProvider: AgentProvider | null;
+  /**
+   * The models actually **detected** on the configured local endpoint (the
+   * server's real model list, probed via `list_local_models`). Empty until a
+   * local provider is configured and reachable — so the selector never advertises
+   * a model that isn't really there (the no-stub honesty fix; the old hardcoded
+   * `llama3.1` is gone).
+   */
+  localModels: string[];
   /** In-flight optimistic mutations by opId. */
   pending: Record<Ulid, PendingOp>;
   /** Buffered ephemeral run/chat output per node (bottom rail / chat tab). */
@@ -80,6 +173,54 @@ export interface UiState {
   /** The highest op-log `seq` folded so far (gap detection). */
   lastSeq: number;
 
+  // --- chrome / layout UI state (UI_UX_DESIGN.md §4, §12) ---
+  /** Daemon connection state for the status dot / sub-strip + banner. */
+  connection: ConnectionState;
+  /** Left navigator collapsed to a thin rail. */
+  navCollapsed: boolean;
+  /** Right details panel collapsed. */
+  detailsCollapsed: boolean;
+  /** Bottom rail collapsed to its tab bar. */
+  railCollapsed: boolean;
+  /** Left navigator width in px (drag-resizable; clamped). */
+  navWidth: number;
+  /** Right details panel width in px (drag-resizable; clamped). */
+  detailsWidth: number;
+  /** Bottom rail (Activity/Run) expanded height in px (drag-resizable; clamped). */
+  railHeight: number;
+  /** Layout density (applies `data-density` on the document element). */
+  density: DensityMode;
+  /**
+   * Node-type filter: the set of kinds to HIGHLIGHT. Empty = no filter (all
+   * normal). When non-empty, non-matching nodes dim on the canvas (§5.2/§7.2).
+   */
+  kindFilter: string[];
+  /** Canvas free-text search query; non-matching nodes dim (§5.4/§7.3). */
+  canvasSearch: string;
+  /**
+   * The focused line (lane), by its internal `branchId`, or null for "all lines."
+   * Focusing a lane dims the others on the canvas — it never switches HEAD
+   * (lines are emergent, not managed; REALIGNMENT_PLAN §5a).
+   */
+  focusedLane: string | null;
+  /** Which surface fills the center region (canvas ⇄ hero chat). */
+  centerView: CenterView;
+  /** The currently open modal, or null. */
+  modal: AppModal | null;
+  /** Whether the ⌘K command palette is open. */
+  paletteOpen: boolean;
+  /** The open context menu, or null. */
+  contextMenu: ContextMenu | null;
+  /** Whether the settings popover is open. */
+  settingsOpen: boolean;
+  /**
+   * Whether a project open/import is in flight (P7.5 MVP). Gates the canvas so a
+   * reopened/just-opened project shows a spinner — not the onboarding picker —
+   * until its first `graph_view` lands (avoids the empty-state flash + an
+   * accidental re-open click).
+   */
+  projectOpening: boolean;
+
   // --- actions ---
   /** Replace the whole view-model (e.g. after a `graph_view` fetch). */
   setView: (view: GraphView) => void;
@@ -87,6 +228,12 @@ export interface UiState {
   selectNode: (id: Ulid | null) => void;
   /** Set the default model for new nodes. */
   setDefaultModel: (model: string) => void;
+  /** Set the preferred external editor launcher (R2). */
+  setEditorPref: (editor: string) => void;
+  /** Set (or clear) the configured agent provider (P7.5 W3). */
+  setAgentProvider: (provider: AgentProvider | null) => void;
+  /** Set the real models detected on the configured local endpoint. */
+  setLocalModels: (models: string[]) => void;
   /**
    * Register an optimistic mutation awaiting reconciliation. `subjectId` is the
    * minted id (the new `nodeId`/`refId`) the tailing op-log event will reference;
@@ -97,6 +244,19 @@ export interface UiState {
   resolveOptimistic: (opId: Ulid) => void;
   /** Fold one op-log event into the view-model and reconcile optimistic ops. */
   ingestEvent: (event: OpLogEvent) => void;
+  /**
+   * Upsert an agent-run's attached context node and its dotted `DERIVED_FROM`
+   * edge to `targetId`, from the authoritative `NODE_AGENT_RUN` reply (P6). The
+   * reply's `ids` carry the model + cost the minimal op-log events do not, so the
+   * cost/model show immediately rather than only after a full graph_view resync.
+   */
+  attachAgentNode: (node: NodeView, targetId: Ulid) => void;
+  /**
+   * Upsert a code-changing **Edit** node (P7.5 W4) as a lineage child of the
+   * target (a solid PARENT_CHILD edge), so the new Edit node renders immediately
+   * from the agent-edit reply (the op-log NODE_CREATED reconciles the same id).
+   */
+  attachEditNode: (node: NodeView, targetId: Ulid) => void;
   /** Buffer one ephemeral frame onto the node's rail (non-blocking). */
   ingestEphemeral: (frame: EphemeralFrame) => void;
   /**
@@ -104,6 +264,46 @@ export interface UiState {
    * The log is trimmed to `ACTIVITY_LOG_LIMIT` so it never grows without bound.
    */
   logActivity: (level: ActivityLevel, text: string) => void;
+  /** Set the daemon connection state. */
+  setConnection: (state: ConnectionState) => void;
+  /** Toggle the left navigator collapsed state. */
+  toggleNav: () => void;
+  /** Toggle the right details panel collapsed state. */
+  toggleDetails: () => void;
+  /** Set the bottom rail collapsed state. */
+  setRailCollapsed: (collapsed: boolean) => void;
+  /** Set the left navigator width (px); the caller clamps. */
+  setNavWidth: (px: number) => void;
+  /** Set the right details panel width (px); the caller clamps. */
+  setDetailsWidth: (px: number) => void;
+  /** Set the bottom rail height (px); the caller clamps. */
+  setRailHeight: (px: number) => void;
+  /** Set layout density. */
+  setDensity: (density: DensityMode) => void;
+  /** Toggle a node `kind` in the highlight filter (empty = no filter). */
+  toggleKindFilter: (kind: string) => void;
+  /** Clear the node-type filter. */
+  clearKindFilter: () => void;
+  /** Set the canvas search query. */
+  setCanvasSearch: (q: string) => void;
+  /** Focus a line (lane) by its `branchId`, or pass null to clear (show all). */
+  focusLane: (branchId: string | null) => void;
+  /** Switch the center surface between the canvas and the hero chat. */
+  setCenterView: (view: CenterView) => void;
+  /** Open a modal (replaces any open modal). */
+  openModal: (modal: AppModal) => void;
+  /** Close the open modal. */
+  closeModal: () => void;
+  /** Open/close the ⌘K command palette. */
+  setPaletteOpen: (open: boolean) => void;
+  /** Open a context menu (replaces any open one). */
+  openContextMenu: (menu: ContextMenu) => void;
+  /** Close the open context menu. */
+  closeContextMenu: () => void;
+  /** Open/close the settings popover. */
+  setSettingsOpen: (open: boolean) => void;
+  /** Set whether a project open/import is in flight (gates the canvas). */
+  setProjectOpening: (opening: boolean) => void;
   /** Reset the store to its initial state (tests). */
   reset: () => void;
 }
@@ -133,13 +333,34 @@ function eventSubjectId(event: OpLogEvent): Ulid | null {
 const INITIAL = {
   view: EMPTY_VIEW,
   selectedNodeId: null as Ulid | null,
-  // The default model for new nodes; the top-bar selector defaults to this and
-  // it is one of TopBar's MODELS (DESIGN.md §14.2).
-  defaultModel: "claude-sonnet-4-6",
+  // The default model selector (a `provider/model` key). Empty until a provider
+  // is configured + a real model is detected — the selector shows a
+  // "configure a provider" hint rather than a fake default (no-stub honesty).
+  defaultModel: "",
+  editorPref: "",
+  agentProvider: null as AgentProvider | null,
+  localModels: [] as string[],
   pending: {} as Record<Ulid, PendingOp>,
   rail: {} as RunRail,
   activity: [] as ActivityEntry[],
   lastSeq: 0,
+  connection: "connected" as ConnectionState,
+  navCollapsed: false,
+  detailsCollapsed: false,
+  railCollapsed: false,
+  navWidth: 232,
+  detailsWidth: 360,
+  railHeight: 200,
+  density: "comfortable" as DensityMode,
+  kindFilter: [] as string[],
+  canvasSearch: "",
+  focusedLane: null as string | null,
+  centerView: "canvas" as CenterView,
+  modal: null as AppModal | null,
+  paletteOpen: false,
+  contextMenu: null as ContextMenu | null,
+  settingsOpen: false,
+  projectOpening: false,
 };
 
 /** A monotonic counter making each activity entry's React key unique. */
@@ -153,6 +374,12 @@ export const useUiStore = create<UiState>((set) => ({
   selectNode: (id) => set({ selectedNodeId: id }),
 
   setDefaultModel: (model) => set({ defaultModel: model }),
+
+  setEditorPref: (editor) => set({ editorPref: editor }),
+
+  setAgentProvider: (provider) => set({ agentProvider: provider }),
+
+  setLocalModels: (localModels) => set({ localModels }),
 
   beginOptimistic: (opId, label, subjectId = null) =>
     set((s) => ({
@@ -194,6 +421,45 @@ export const useUiStore = create<UiState>((set) => ({
       };
     }),
 
+  attachAgentNode: (node, targetId) =>
+    set((s) => {
+      const nodes = s.view.nodes.some((n) => n.id === node.id)
+        ? s.view.nodes.map((n) => (n.id === node.id ? node : n))
+        : [...s.view.nodes, node];
+      const hasEdge = s.view.edges.some(
+        (e) =>
+          e.from === node.id &&
+          e.to === targetId &&
+          e.edgeType === "DERIVED_FROM",
+      );
+      const edges = hasEdge
+        ? s.view.edges
+        : [
+            ...s.view.edges,
+            { from: node.id, to: targetId, edgeType: "DERIVED_FROM" as const },
+          ];
+      return { view: { ...s.view, nodes, edges } };
+    }),
+
+  attachEditNode: (node, targetId) =>
+    set((s) => {
+      const nodes = s.view.nodes.some((n) => n.id === node.id)
+        ? s.view.nodes.map((n) => (n.id === node.id ? node : n))
+        : [...s.view.nodes, node];
+      // A solid lineage edge parent -> child (PARENT_CHILD), matching the daemon's
+      // create-node event direction.
+      const hasEdge = s.view.edges.some(
+        (e) => e.from === targetId && e.to === node.id && e.edgeType === "PARENT_CHILD",
+      );
+      const edges = hasEdge
+        ? s.view.edges
+        : [
+            ...s.view.edges,
+            { from: targetId, to: node.id, edgeType: "PARENT_CHILD" as const },
+          ];
+      return { view: { ...s.view, nodes, edges } };
+    }),
+
   ingestEphemeral: (frame) =>
     set((s) => {
       const prev = s.rail[frame.nodeId] ?? [];
@@ -221,11 +487,57 @@ export const useUiStore = create<UiState>((set) => ({
       };
     }),
 
+  setConnection: (connection) => set({ connection }),
+
+  toggleNav: () => set((s) => ({ navCollapsed: !s.navCollapsed })),
+
+  toggleDetails: () => set((s) => ({ detailsCollapsed: !s.detailsCollapsed })),
+
+  setRailCollapsed: (railCollapsed) => set({ railCollapsed }),
+
+  setNavWidth: (navWidth) => set({ navWidth }),
+  setDetailsWidth: (detailsWidth) => set({ detailsWidth }),
+  setRailHeight: (railHeight) => set({ railHeight }),
+
+  setDensity: (density) => set({ density }),
+
+  toggleKindFilter: (kind) =>
+    set((s) => ({
+      kindFilter: s.kindFilter.includes(kind)
+        ? s.kindFilter.filter((k) => k !== kind)
+        : [...s.kindFilter, kind],
+    })),
+
+  clearKindFilter: () => set({ kindFilter: [] }),
+
+  setCanvasSearch: (canvasSearch) => set({ canvasSearch }),
+
+  focusLane: (focusedLane) => set({ focusedLane }),
+
+  setCenterView: (centerView) => set({ centerView }),
+
+  openModal: (modal) => set({ modal, contextMenu: null, paletteOpen: false }),
+
+  closeModal: () => set({ modal: null }),
+
+  setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
+
+  openContextMenu: (contextMenu) => set({ contextMenu }),
+
+  closeContextMenu: () => set({ contextMenu: null }),
+
+  setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+
+  setProjectOpening: (projectOpening) => set({ projectOpening }),
+
   reset: () =>
     set({
       ...INITIAL,
       pending: {},
       rail: {},
       activity: [],
+      kindFilter: [],
+      modal: null,
+      contextMenu: null,
     }),
 }));

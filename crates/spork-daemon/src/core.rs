@@ -46,6 +46,28 @@ use crate::error::DaemonError;
 /// the audit trail records the real scope used, not the grant envelope.
 pub const WORKTREE_GLOB: &str = "**";
 
+/// The hidden subdirectory of a project that holds Spork's own state (CAS, event
+/// log, vault, agent config) when the daemon is rooted at a real project
+/// directory via [`DaemonBuilder::for_project`] (P7.5 MVP). Excluded from capture
+/// so the content store never ingests itself (DESIGN.md §10.5).
+pub const STATE_SUBDIR: &str = ".spork";
+
+/// The ignore profile a project-rooted daemon captures under: the F0
+/// deps-excluded default profile **plus** the Spork state dir, so capturing the
+/// user's repo never walks into `.spork/` (where the CAS would otherwise ingest
+/// itself) while still seeing all of the user's files (DESIGN.md §10.5).
+///
+/// Additive over the frozen default profile (CLAUDE.md C2): it derives a *new*
+/// profile from the default patterns and does not mutate
+/// [`IgnoreProfile::default_profile`] or its hash. The resulting profile is
+/// stable across opens, so snapshot identity (diff/restore) is consistent for a
+/// given project.
+fn project_ignore_profile() -> IgnoreProfile {
+    let mut patterns: Vec<String> = IgnoreProfile::default_profile().patterns().to_vec();
+    patterns.push(format!("{STATE_SUBDIR}/"));
+    IgnoreProfile::from_patterns(patterns).unwrap_or_else(|_| IgnoreProfile::default_profile())
+}
+
 /// The schema version of the daemon's own configuration record (CLAUDE.md C5).
 ///
 /// The daemon persists no struct of its own beyond the records its subsystems
@@ -53,6 +75,15 @@ pub const WORKTREE_GLOB: &str = "**";
 /// set of subsystems the daemon composes — which a future generation can grow
 /// additively behind the same `CommandHandler` seam.
 pub const DAEMON_SCHEMA_VERSION: u16 = 1;
+
+/// The default `model.invoke` token budget granted by
+/// [`DaemonBuilder::grant_model_access`] — generous, for a local-first dev tool
+/// (the broker refuses a per-run request that exceeds it).
+const MODEL_TOKEN_BUDGET: u64 = 1_000_000_000;
+
+/// The default `model.invoke` USD budget (in micro-USD) granted by
+/// [`DaemonBuilder::grant_model_access`] — `$1000`.
+const MODEL_USD_BUDGET_MICROS: u64 = 1_000_000_000;
 
 /// All the privileged, single-threaded state a command may touch, owned behind
 /// one lock so a dispatch is an atomic critical section.
@@ -193,6 +224,24 @@ pub struct Daemon {
     /// §8.2, §9.2). Held outside the core lock (it is internally `Sync`) so a
     /// check's cache I/O never contends with a graph dispatch.
     pub(crate) result_cache: spork_runner::InMemoryResultCache,
+    /// The P6 multi-provider model router (`node.agentRun`): resolves a node's
+    /// selector to a concrete provider, enforcing privacy before any byte leaves
+    /// and exposing the fallback chain (DESIGN §12.1, §12.3). Held outside the
+    /// core lock — it is internally synchronized (its breaker is a `Mutex`).
+    pub(crate) router: spork_provider::MultiProviderRouter,
+    /// The P6 cache-aware cost accountant: prices a turn's token usage into the
+    /// canonical `CostRecord` attached to the agent-run's context node (DESIGN
+    /// §12.5). Immutable after construction.
+    pub(crate) accountant: spork_cost::CostAccountant,
+    /// The transports the daemon offers per provider (local HTTP server / CLI
+    /// agent). Cloud needs the deferred TLS transport (DESIGN §12.1).
+    ///
+    /// Behind its own [`Mutex`] (not the core lock) so the desktop app can swap
+    /// the configured provider at runtime via
+    /// [`Daemon::set_agent_config`](crate::Daemon::set_agent_config) without
+    /// reopening the project (P7.5 MVP, W3). An agent run clones it out once at
+    /// the start so the (long, networked) turn never holds this lock.
+    pub(crate) agent_config: Mutex<crate::agent::AgentConfig>,
 }
 
 /// A builder for a [`Daemon`], for callers that need a custom grant set or vault
@@ -206,9 +255,14 @@ pub struct Daemon {
 /// deployment that grants `secrets.get` for a named handle).
 pub struct DaemonBuilder {
     root: PathBuf,
+    /// The working directory the daemon captures/restores. `None` defaults to
+    /// `<root>/work`; [`DaemonBuilder::for_project`] sets it to the real project
+    /// dir so capture sees the user's code, not an empty scratch dir.
+    workdir: Option<PathBuf>,
     grants: Vec<Grant>,
     ignore_profile: IgnoreProfile,
     scanner: SecretScanner,
+    agent_config: crate::agent::AgentConfig,
 }
 
 impl DaemonBuilder {
@@ -219,10 +273,43 @@ impl DaemonBuilder {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         DaemonBuilder {
             root: root.into(),
+            workdir: None,
             grants: default_grants(),
             ignore_profile: IgnoreProfile::default_profile(),
             scanner: SecretScanner::default(),
+            agent_config: crate::agent::AgentConfig::default(),
         }
+    }
+
+    /// Configure a builder for a real on-disk **project**: capture the user's
+    /// actual repo (`project_dir`) as the working tree while keeping Spork's own
+    /// state (CAS, event log, vault, agent config) under a hidden
+    /// `<project_dir>/.spork/` excluded from capture (P7.5 MVP, W2; DESIGN.md
+    /// §10.1, §10.5). This is the recommended entry point for the desktop app's
+    /// `open_project`, replacing the empty-scratch-dir default so a freshly opened
+    /// project can capture and render its real code.
+    ///
+    /// Additive over [`DaemonBuilder::new`] (CLAUDE.md C2): the default
+    /// `<root>/work` layout is untouched, and the ignore profile is derived from
+    /// (never mutates) the frozen default profile.
+    #[must_use]
+    pub fn for_project(project_dir: impl Into<PathBuf>) -> Self {
+        let project_dir = project_dir.into();
+        let state_dir = project_dir.join(STATE_SUBDIR);
+        let mut builder = DaemonBuilder::new(state_dir);
+        builder.workdir = Some(project_dir);
+        builder.ignore_profile = project_ignore_profile();
+        builder
+    }
+
+    /// Override the working directory the daemon captures/restores (default
+    /// `<root>/work`). [`DaemonBuilder::for_project`] sets this to the real
+    /// project dir; exposed for callers that keep state and working tree apart.
+    /// Additive (CLAUDE.md C2).
+    #[must_use]
+    pub fn with_workdir(mut self, workdir: impl Into<PathBuf>) -> Self {
+        self.workdir = Some(workdir.into());
+        self
     }
 
     /// Replace the broker's grant set wholesale (deny-by-default otherwise).
@@ -254,6 +341,45 @@ impl DaemonBuilder {
         self
     }
 
+    /// Set the P6 agent transports (which providers the daemon can reach: a local
+    /// HTTP server endpoint and/or a CLI agent command).
+    #[must_use]
+    pub fn with_agent_config(mut self, config: crate::agent::AgentConfig) -> Self {
+        self.agent_config = config;
+        self
+    }
+
+    /// Grant the daemon **model access** (opt-in): `model.invoke` (budget-bounded)
+    /// plus `net.connect` to the local model host(s).
+    ///
+    /// Model invocation reaches the network / spends money, so it stays
+    /// **denied by default** (DESIGN §15.1) — the default grants cover only
+    /// snapshot read/write + process spawn. A caller that wants `node.agentRun`
+    /// to run (the desktop app once a provider is configured, a test) opts in
+    /// here. The model budget is generous (this is a local-first dev tool); the
+    /// host allowlist is the local model servers only, so cloud egress still
+    /// requires a separate, explicit grant *and* the (deferred) TLS transport.
+    #[must_use]
+    pub fn grant_model_access(mut self) -> Self {
+        self.grants.push(Grant::new(
+            Capability::ModelInvoke,
+            Scope::new()
+                .with_token_budget(MODEL_TOKEN_BUDGET)
+                .with_usd_budget_micros(MODEL_USD_BUDGET_MICROS),
+        ));
+        self.grants.push(Grant::new(
+            Capability::NetConnect,
+            Scope::new().with_hosts(["localhost", "127.0.0.1"]),
+        ));
+        // P7: the read-only Lineage/History MCP (`history.query`) is gated on
+        // `nodes.readOutputs` (lineage-only, read-only). It is granted alongside
+        // model access since both are "agent surfaces"; it stays deny-by-default
+        // without this opt-in (DESIGN §13.7, §15.2).
+        self.grants
+            .push(Grant::new(Capability::NodesReadOutputs, Scope::new()));
+        self
+    }
+
     /// Build the daemon, creating the working tree, CAS, event log, and vault
     /// directories under `root` as needed.
     ///
@@ -261,7 +387,10 @@ impl DaemonBuilder {
     /// Returns [`DaemonError`] if any backing store cannot be opened/created.
     pub fn build(self) -> Result<Daemon, DaemonError> {
         let root = self.root;
-        let workdir = root.join("work");
+        // The working tree defaults to `<root>/work` (the scratch layout), but a
+        // project-rooted daemon (`for_project`) captures the user's real repo
+        // instead (P7.5 MVP, W2).
+        let workdir = self.workdir.unwrap_or_else(|| root.join("work"));
         let cas_dir = root.join("cas");
         let vault_dir = root.join("vault");
         let log_path = root.join("log.db");
@@ -314,6 +443,9 @@ impl DaemonBuilder {
             events: EventStream::new(),
             ephemeral: EphemeralBus::new(),
             result_cache: spork_runner::InMemoryResultCache::new(),
+            router: crate::agent::default_router(),
+            accountant: crate::agent::default_accountant(),
+            agent_config: Mutex::new(self.agent_config),
         })
     }
 }
@@ -397,6 +529,16 @@ pub(crate) fn register_builtins_into(graph: &mut GraphService) -> Result<(), Dae
             .register_descriptor(descriptor)
             .map_err(|e| DaemonError::Graph(e.to_string()))?;
     }
+    // P6: the context node an agent run attaches its answer as, registered
+    // through the same public registry path (DESIGN §6.6, §7.1, §9).
+    graph
+        .register_descriptor(crate::agent::agent_context_descriptor())
+        .map_err(|e| DaemonError::Graph(e.to_string()))?;
+    // P7: the gate-verdict node a gated merge attaches, same public path
+    // (DESIGN §8.3, §7.1, §9).
+    graph
+        .register_descriptor(crate::gate::gate_descriptor())
+        .map_err(|e| DaemonError::Graph(e.to_string()))?;
     Ok(())
 }
 

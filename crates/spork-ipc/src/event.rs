@@ -184,6 +184,31 @@ pub enum OpLogEvent {
         /// [`OpLogEvent::ResultRecorded`].
         run_id: Ulid,
     },
+
+    /// A quality gate was evaluated and a verdict node attached (P7
+    /// `GATE_EVALUATED`, DESIGN.md §8.3). Emitted by
+    /// [`Command::BranchMergeGated`](crate::Command::BranchMergeGated): an
+    /// immutable gate-verdict node was created against the merge node (and, on an
+    /// override, an audit record). Appended after the frozen variants, so existing
+    /// wire forms are unchanged (CLAUDE.md C2/C3).
+    GateEvaluated {
+        /// Ordered position in the stream.
+        seq: u64,
+        /// The verdict node that was attached.
+        node_id: Ulid,
+    },
+
+    /// A historical node was checked out (P7 `CHECKOUT_PERFORMED`, DESIGN.md
+    /// §6.6). Emitted by [`Command::NodeCheckout`](crate::Command::NodeCheckout);
+    /// when the node was a non-tip, an accompanying
+    /// [`OpLogEvent::BranchForked`] / [`OpLogEvent::RefCreated`] records the
+    /// fork-on-divergence branch.
+    CheckoutPerformed {
+        /// Ordered position in the stream.
+        seq: u64,
+        /// The node that was checked out.
+        node_id: Ulid,
+    },
 }
 
 impl OpLogEvent {
@@ -205,7 +230,9 @@ impl OpLogEvent {
             | OpLogEvent::GcPerformed { seq }
             | OpLogEvent::ResultRecorded { seq, .. }
             | OpLogEvent::MergePerformed { seq, .. }
-            | OpLogEvent::CheckScheduled { seq, .. } => *seq,
+            | OpLogEvent::CheckScheduled { seq, .. }
+            | OpLogEvent::GateEvaluated { seq, .. }
+            | OpLogEvent::CheckoutPerformed { seq, .. } => *seq,
         }
     }
 
@@ -227,6 +254,8 @@ impl OpLogEvent {
             OpLogEvent::ResultRecorded { .. } => "RESULT_RECORDED",
             OpLogEvent::MergePerformed { .. } => "MERGE_PERFORMED",
             OpLogEvent::CheckScheduled { .. } => "CHECK_SCHEDULED",
+            OpLogEvent::GateEvaluated { .. } => "GATE_EVALUATED",
+            OpLogEvent::CheckoutPerformed { .. } => "CHECKOUT_PERFORMED",
         }
     }
 }

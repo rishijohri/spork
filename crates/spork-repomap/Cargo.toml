@@ -1,0 +1,9 @@
+[package]
+name = "spork-repomap"
+version = "0.1.0"
+edition = "2021"
+description = "Spork P7 repo map: a pluggable SymbolExtractor + PageRank-ranked, token-bounded repo map for the context compiler's repo_map layer (DESIGN §13.6)."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

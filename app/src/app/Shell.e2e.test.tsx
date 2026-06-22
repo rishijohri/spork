@@ -1,14 +1,19 @@
 // End-to-end-ish shell flow (DESIGN.md §14.4) — the single reconciliation path.
 //
 // This is the test the F3-UI bar's optimistic-UI contract turns on: a dispatched
-// MUTATION returns only an `opId`; the resulting graph state arrives over the
-// op-log event stream and the pure reducer folds it into the live view-model —
-// which the canvas then renders. Tauri is mocked end to end (invoke + listen),
-// so we drive the real Shell wiring (graph_view seed → op-log subscription →
-// toolbar dispatch → replayed event → view update) with no daemon and no display.
+// MUTATION returns only an `opId` (+ minted nodeId); the resulting graph state
+// arrives over the op-log event stream and the pure reducer folds it into the
+// live view-model — which the canvas then renders. Tauri is mocked end to end
+// (invoke + listen), so we drive the real Shell wiring (graph_view seed → op-log
+// subscription → toolbar dispatch → replayed event → view update) with no daemon
+// and no display.
+//
+// The toolbar now renders ONCE (top bar). Run-check is a dropdown; the durable
+// state arrives only via the stream. Ephemeral frames update the STORE rail (the
+// new RunRail renders the Activity tab, not RUN_STDOUT — that's forward-map).
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { render, fireEvent, waitFor, act } from "@testing-library/react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Shell } from "./Shell";
@@ -20,7 +25,6 @@ import {
   emitOpLogEvent,
   emitEphemeral,
 } from "../ipc/mock";
-import { descriptorFor } from "../canvas/descriptors";
 import type { GraphView } from "../ipc/types";
 
 const ROOT = "00000000000000000000000001";
@@ -29,7 +33,7 @@ const OP = "0000000000000000000000000P";
 
 function seedView(): GraphView {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     nodes: [
       {
         id: ROOT,
@@ -42,6 +46,11 @@ function seedView(): GraphView {
         branchId: "main",
         parentIds: [],
         model: "gpt-4o",
+        cost: null,
+        gate: null,
+        presentationStatus: null,
+        lineLabel: "main",
+        forkedFrom: null,
       },
     ],
     edges: [],
@@ -65,11 +74,10 @@ describe("Shell end-to-end-ish flow (mocked Tauri)", () => {
     useUiStore.getState().reset();
   });
 
-  it("a dispatched mutation updates the view via a replayed op-log event", async () => {
+  it("a dispatched run-check mutation updates the view via replayed op-log events", async () => {
     setMockGraphView(seedView());
     // The mutation replies with only a correlation opId + the minted nodeId —
-    // never the new graph state. The minted id is the reconciliation key. We use
-    // Validate (NODE_RUN_CHECK), which mints the new observing-result node id.
+    // never the new graph state. The minted id is the reconciliation key.
     setDispatchReply("NODE_RUN_CHECK", {
       result: "MUTATION",
       opId: OP,
@@ -79,40 +87,49 @@ describe("Shell end-to-end-ish flow (mocked Tauri)", () => {
     renderShell();
 
     // The graph_view fetch seeds the live view-model: the root node renders.
-    const editDesc = descriptorFor("codebase-edit");
     await waitFor(() => {
-      expect(
-        screen.getByText(`${editDesc.icon} ${editDesc.label}`),
-      ).toBeInTheDocument();
+      expect(useUiStore.getState().view.nodes).toHaveLength(1);
     });
-    expect(useUiStore.getState().view.nodes).toHaveLength(1);
 
-    // Select the root node, then dispatch a mutation from the wired top-bar
-    // toolbar (Validate runs an observing check against the selection).
+    // Select the root node so the single top-bar toolbar gates on it.
     act(() => {
       useUiStore.getState().selectNode(ROOT);
     });
-    // Both the top bar and the node-details panel render the toolbar, so there
-    // are two "Validate" buttons once a node is selected; drive the first.
-    const validateBtn = screen.getAllByRole("button", { name: "Validate" })[0]!;
-    fireEvent.click(validateBtn);
 
-    // The frozen NODE_RUN_CHECK command reached the daemon, and its returned opId
-    // is registered as an in-flight optimistic op (DESIGN.md §14.4).
+    // The toolbar renders ONCE now (top bar). Open the "+ New node from here"
+    // menu, then pick the Action "Run tests" item to dispatch NODE_RUN_CHECK.
+    const newNodeBtn = await waitFor(() => {
+      const btns = document.querySelectorAll<HTMLButtonElement>(
+        '[data-action="newNode"]',
+      );
+      expect(btns).toHaveLength(1);
+      return btns[0]!;
+    });
+    fireEvent.click(newNodeBtn);
+
+    const runTestsItem = await waitFor(() => {
+      const item = document.querySelector<HTMLButtonElement>(
+        '[data-newnode="run-tests"]',
+      );
+      expect(item).not.toBeNull();
+      return item!;
+    });
+    fireEvent.click(runTestsItem);
+
+    // The frozen NODE_RUN_CHECK command reached the daemon, targeting the root,
+    // and its returned opId is registered as an in-flight optimistic op (§14.4).
     await waitFor(() => {
+      const runCheck = getDispatchedCommands().find(
+        (c) => c.command === "NODE_RUN_CHECK",
+      );
+      expect(runCheck).toBeDefined();
       expect(
-        getDispatchedCommands().some((c) => c.command === "NODE_RUN_CHECK"),
-      ).toBe(true);
+        runCheck?.command === "NODE_RUN_CHECK" ? runCheck.targetNodeId : null,
+      ).toBe(ROOT);
       expect(useUiStore.getState().pending[OP]).toBeDefined();
     });
-    // The button's in-flight state settles back.
-    await waitFor(() =>
-      expect(
-        screen.getAllByRole("button", { name: "Validate" })[0],
-      ).toBeEnabled(),
-    );
 
-    // The view has NOT yet grown — state only arrives over the op-log stream.
+    // The view has NOT yet grown — durable state only arrives over the stream.
     expect(useUiStore.getState().view.nodes).toHaveLength(1);
 
     // The backend now forwards the resulting durable events. Replaying them
@@ -129,34 +146,32 @@ describe("Shell end-to-end-ish flow (mocked Tauri)", () => {
         seq: 2,
         from: ROOT,
         to: CREATED,
-        edge: "PARENT_CHILD",
+        edge: "VALIDATES",
       });
     });
 
-    // The replayed events updated the live view: the new node + edge are now in
-    // the view-model, and a second card renders on the canvas.
+    // The replayed events updated the live view: the new node + edge are in the
+    // view-model now, and the optimistic op reconciled via the live wiring alone
+    // (the single reconciliation path) — no manual resolve.
     await waitFor(() => {
       const v = useUiStore.getState().view;
       expect(v.nodes.some((n) => n.id === CREATED)).toBe(true);
-      expect(
-        v.edges.some((e) => e.from === ROOT && e.to === CREATED),
-      ).toBe(true);
+      expect(v.edges.some((e) => e.from === ROOT && e.to === CREATED)).toBe(
+        true,
+      );
       expect(v.nodes).toHaveLength(2);
+      expect(useUiStore.getState().pending[OP]).toBeUndefined();
     });
-
-    // The NODE_CREATED event for the minted id reconciled the optimistic op via
-    // the live wiring alone (the single reconciliation path) — no manual resolve.
-    expect(useUiStore.getState().pending[OP]).toBeUndefined();
   });
 
-  it("ephemeral run frames stream into the run rail without blocking the op-log", async () => {
+  it("ephemeral run frames buffer into the store rail without stalling the op-log", async () => {
     setMockGraphView(seedView());
     renderShell();
 
-    // Select the root node so the bottom rail targets it.
     await waitFor(() => {
       expect(useUiStore.getState().view.nodes).toHaveLength(1);
     });
+
     act(() => {
       useUiStore.getState().selectNode(ROOT);
       // A flood of ephemeral frames arrives off the side-channel...
@@ -167,14 +182,15 @@ describe("Shell end-to-end-ish flow (mocked Tauri)", () => {
           data: `line ${i}\n`,
         });
       }
-      // ...and an ordered op-log event still lands (the side-channel never
-      // stalls the ordered path, DESIGN.md §5.5/§14.4).
+      // ...and an ordered op-log event still lands (the side-channel never stalls
+      // the ordered path, DESIGN.md §5.5/§14.4).
       emitOpLogEvent({ type: "GC_PERFORMED", seq: 7 });
     });
 
+    // The frames buffer onto the node's rail in the STORE (the new RunRail does
+    // not render RUN_STDOUT — it's forward-map), and the ordered seq advanced.
     await waitFor(() => {
-      const log = screen.getByTestId("runrail-log");
-      expect(log.textContent).toBe("line 0\nline 1\nline 2\n");
+      expect(useUiStore.getState().rail[ROOT]).toHaveLength(3);
       expect(useUiStore.getState().lastSeq).toBe(7);
     });
   });

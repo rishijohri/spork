@@ -28,6 +28,14 @@ members = [
     "crates/spork-context",
     "crates/spork-merge",
     "crates/spork-nodes",
+    "crates/spork-cost",
+    "crates/spork-transport",
+    "crates/spork-agent",
+    "crates/spork-baseline",
+    "crates/spork-gates",
+    "crates/spork-repomap",
+    "crates/spork-memory",
+    "crates/spork-history",
 ]
 
 # The Tauri desktop app (F3-UI) is a SEPARATE, standalone cargo workspace under

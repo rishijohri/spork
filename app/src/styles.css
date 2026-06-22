@@ -1,15 +1,57 @@
-/* Spork F3-UI shell layout (DESIGN.md §14.2). Minimal, functional — the user
-   owns visual polish. The five regions are a CSS grid. */
+/* Spork UI design system (UI_UX_DESIGN.md §3).
+ *
+ * A token-based, dark-first language: a layered cool-neutral ramp (depth via
+ * elevation, not boxed borders), one iris accent, a strict semantic-status set,
+ * a real type + spacing scale, and full control states (hover/focus/active/
+ * disabled/busy) the first cut lacked entirely. Node-TYPE colors are NOT tokens —
+ * they come from each NodeTypeDescriptor (schema-driven, §3.2/§6.1). */
 
 :root {
-  --bg: #141414;
-  --panel-bg: #1b1b1b;
-  --border: #2a2a2a;
-  --fg: #e5e7eb;
-  --muted: #9ca3af;
-  --card-bg: #1e1e1e;
-  --card-fg: #e5e7eb;
+  /* neutrals (elevation layers) */
+  --bg-base: #0d1017;
+  --bg-sunken: #0a0c12;
+  --bg-surface: #141822;
+  --bg-raised: #1b2130;
+  --bg-overlay: #212838;
+  --border-subtle: #232a38;
+  --border-strong: #323b4d;
+  /* foreground */
+  --fg: #e6e9f0;
+  --fg-muted: #97a0b3;
+  --fg-faint: #5e677a;
+  /* accent (iris) */
+  --accent: #7c8cff;
+  --accent-hover: #94a1ff;
+  --accent-quiet: #7c8cff1f;
+  --on-accent: #0b0e16;
+  /* semantic status */
+  --ok: #3fb950;
+  --danger: #f85149;
+  --warn: #d29922;
+  --info: #58a6ff;
+  --neutral: #8b949e;
+  /* radius */
+  --r-control: 6px;
+  --r-card: 10px;
+  --r-panel: 14px;
+  /* elevation */
+  --elev-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --elev-2: 0 4px 14px rgba(0, 0, 0, 0.45);
+  --elev-3: 0 16px 48px rgba(0, 0, 0, 0.55);
+  /* type */
+  --font-ui:
+    "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono:
+    "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   color-scheme: dark;
+}
+
+/* density: compact tightens the spacing scale (Settings → §5.13) */
+:root[data-density="compact"] {
+  --pad-panel: 10px;
+}
+:root {
+  --pad-panel: 16px;
 }
 
 * {
@@ -24,200 +66,1650 @@ body,
 }
 
 body {
-  background: var(--bg);
+  background: var(--bg-base);
   color: var(--fg);
-  font-family:
-    system-ui,
-    -apple-system,
-    sans-serif;
+  font-family: var(--font-ui);
   font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
 }
+
+::selection {
+  background: var(--accent-quiet);
+}
+
+/* scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 600;
+}
+
+code,
+.mono {
+  font-family: var(--font-mono);
+}
+
+/* eyebrow / section labels */
+.spork-eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+/* ------------------------------------------------------------------ controls */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--fg);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-control);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    transform 80ms ease,
+    color 120ms ease;
+}
+.btn:hover {
+  background: var(--bg-overlay);
+  border-color: #3d465a;
+}
+.btn:active {
+  transform: translateY(1px);
+}
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.btn:disabled,
+.btn[aria-disabled="true"] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+.btn--primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+.btn--ghost {
+  background: transparent;
+  border-color: transparent;
+}
+.btn--ghost:hover {
+  background: var(--bg-raised);
+}
+.btn--danger {
+  color: #ffd9d6;
+  border-color: #5a2a2a;
+  background: #2a1414;
+}
+.btn--danger:hover {
+  background: #3a1a1a;
+  border-color: var(--danger);
+}
+.btn--danger.btn--primary {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+.btn--sm {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+/* icon-only button */
+.iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  color: var(--fg-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-control);
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+.iconbtn:hover {
+  background: var(--bg-raised);
+  color: var(--fg);
+}
+.iconbtn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.iconbtn:disabled,
+.iconbtn[aria-disabled="true"] {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.iconbtn--active {
+  background: var(--accent-quiet);
+  color: var(--accent);
+}
+
+/* busy spinner on any control */
+[data-busy="true"] {
+  position: relative;
+  color: transparent !important;
+}
+[data-busy="true"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--fg-faint);
+  border-top-color: var(--fg);
+  border-radius: 50%;
+  animation: spork-spin 0.7s linear infinite;
+}
+
+.spork-spin {
+  animation: spork-spin 0.8s linear infinite;
+}
+@keyframes spork-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes spork-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+input[type="text"],
+input[type="search"],
+input:not([type]),
+select,
+textarea {
+  font: inherit;
+  font-size: 12px;
+  color: var(--fg);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-control);
+  padding: 5px 8px;
+}
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+  border-color: var(--accent);
+}
+
+/* ------------------------------------------------------------------ shell */
 
 .spork-shell {
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto 1fr auto auto;
   height: 100%;
+  background: var(--bg-base);
 }
 
-.spork-shell-main {
+.spork-main {
   display: grid;
-  grid-template-columns: 200px 1fr 320px;
+  grid-template-columns: var(--nav-w, 232px) 1fr var(--details-w, 360px);
   min-height: 0;
 }
+.spork-main[data-nav="collapsed"] {
+  grid-template-columns: 44px 1fr var(--details-w, 360px);
+}
+.spork-main[data-details="collapsed"] {
+  grid-template-columns: var(--nav-w, 232px) 1fr 0;
+}
+
+/* ------------------------------------------------------------------ top bar */
 
 .spork-topbar {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-  background: var(--panel-bg);
+  gap: 10px;
+  height: 48px;
+  padding: 0 12px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
 }
-
-.spork-topbar-actions,
-.spork-toolbar {
-  display: flex;
+.spork-topbar-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 10px 2px;
+  background: var(--border-subtle);
+}
+.spork-topbar-spacer {
+  flex: 1;
+}
+.spork-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+.spork-brand-mark {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  background: linear-gradient(135deg, var(--accent), #b3a0ff);
+}
+.spork-project {
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+.spork-branch-btn {
   gap: 6px;
-  flex-wrap: wrap;
 }
-
-button {
-  background: #2a2a2a;
+.spork-branch-btn .spork-branch-name {
   color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  padding: 4px 10px;
-  cursor: pointer;
+  font-weight: 600;
 }
 
-button:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
+.spork-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  min-width: 200px;
+  padding: 0 10px;
+  color: var(--fg-faint);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-control);
+  cursor: text;
+}
+.spork-search:hover {
+  border-color: #3d465a;
+}
+.spork-search .spork-kbd {
+  margin-left: auto;
 }
 
-select {
-  background: #2a2a2a;
-  color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  padding: 3px 6px;
+.spork-kbd {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--fg-muted);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 1px 5px;
 }
 
-.spork-legend,
-.spork-details {
-  border-right: 1px solid var(--border);
-  padding: 10px;
-  overflow: auto;
-  background: var(--panel-bg);
+.spork-model-btn .spork-model-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
 }
 
-.spork-details {
-  border-right: none;
-  border-left: 1px solid var(--border);
-}
-
-.spork-legend-title,
-.spork-details-title {
-  font-size: 13px;
-  margin: 0 0 8px;
-}
-
-.spork-legend-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.spork-legend-item {
-  display: flex;
+/* connection status dot */
+.spork-conn {
+  display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 0;
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+.spork-conn-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--neutral);
+}
+.spork-conn[data-state="connected"] .spork-conn-dot {
+  background: var(--ok);
+}
+.spork-conn[data-state="reconnecting"] .spork-conn-dot {
+  background: var(--warn);
+  animation: spork-pulse 1.4s ease-in-out infinite;
+}
+.spork-conn[data-state="disconnected"] .spork-conn-dot {
+  background: var(--danger);
+}
+.spork-conn[data-state="mock"] .spork-conn-dot {
+  background: var(--info);
 }
 
-.spork-legend-swatch {
-  width: 12px;
-  height: 12px;
+/* the node-action toolbar (single instance, top bar) */
+.spork-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.spork-toolbar-empty {
+  font-size: 11px;
+  color: var(--fg-faint);
+  padding: 0 6px;
+}
+
+/* ------------------------------------------------------------------ navigator */
+
+.spork-nav {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border-subtle);
+  overflow: hidden;
+}
+.spork-nav-scroll {
+  overflow: auto;
+  padding: 12px 10px;
+  flex: 1;
+}
+.spork-nav-sectionhdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 4px 4px 6px;
+}
+.spork-nav-section + .spork-nav-section {
+  margin-top: 18px;
+}
+.spork-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border-radius: var(--r-control);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+.spork-row:hover {
+  background: var(--bg-raised);
+}
+.spork-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+.spork-row--active {
+  background: var(--accent-quiet);
+  color: var(--fg);
+}
+.spork-row--active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  width: 3px;
+  height: 18px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.spork-row {
+  position: relative;
+}
+.spork-row .spork-row-count {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-faint);
+}
+.spork-row--dim {
+  opacity: 0.45;
+}
+.spork-swatch {
+  width: 10px;
+  height: 10px;
   border-radius: 3px;
-  display: inline-block;
+  flex: 0 0 auto;
+}
+.spork-nav--collapsed .spork-nav-scroll {
+  padding: 12px 6px;
 }
 
-.spork-shell-canvas {
+/* ------------------------------------------------------------------ canvas */
+
+.spork-canvas-region {
+  height: 100%;
   min-width: 0;
   min-height: 0;
 }
+.spork-canvas-wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-sunken);
+}
+.spork-canvas-wrap .react-flow__attribution {
+  display: none;
+}
 
-.spork-details-header {
+/* node card (custom React Flow node) */
+.spork-card {
+  position: relative;
+  display: flex;
+  gap: 9px;
+  width: 200px;
+  padding: 9px 11px 9px 9px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-card);
+  box-shadow: var(--elev-1);
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    transform 120ms ease;
+}
+.spork-card:hover {
+  border-color: #3d465a;
+}
+.spork-card--selected {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 2px var(--accent-quiet),
+    var(--elev-2);
+}
+.spork-card--stale {
+  /* staleness is shown via the badge, not by dimming the whole card */
+}
+.spork-card-stripe {
+  width: 3px;
+  align-self: stretch;
+  border-radius: 2px;
+  flex: 0 0 auto;
+}
+.spork-card-body {
+  min-width: 0;
+  flex: 1;
+}
+.spork-card-top {
   display: flex;
   align-items: center;
   gap: 6px;
 }
-
-.spork-details-id,
-.spork-runrail-node {
-  color: var(--muted);
+.spork-card-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+.spork-card-kind {
+  font-weight: 600;
+  font-size: 12px;
+}
+.spork-card-title {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.spork-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+}
+.spork-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 110px;
+  padding: 1px 6px;
   font-size: 10px;
+  color: var(--fg-muted);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.spork-snap-dot {
+  position: absolute;
+  top: 8px;
+  right: 9px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.8;
 }
 
-.spork-details-tabs {
+/* status badge (effectiveStatus) */
+.spork-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--neutral);
+}
+.spork-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.spork-status[data-status="passed"] {
+  color: var(--ok);
+}
+.spork-status[data-status="failed"] {
+  color: var(--danger);
+}
+.spork-status[data-status="running"] {
+  color: var(--info);
+}
+.spork-status[data-status="running"] .spork-status-dot {
+  animation: spork-pulse 1.6s ease-in-out infinite;
+}
+.spork-status[data-status="pending"] {
+  color: var(--neutral);
+}
+.spork-status[data-status="pending"] .spork-status-dot {
+  background: transparent;
+  border: 1.5px solid currentColor;
+}
+.spork-status[data-status="blocked"] {
+  color: var(--warn);
+}
+.spork-status[data-status="cancelled"] {
+  color: var(--fg-faint);
+  text-decoration: line-through;
+}
+.spork-status[data-stale="true"] .spork-status-dot {
+  box-shadow: 0 0 0 2px var(--warn);
+}
+.spork-stale-tag {
+  color: var(--warn);
+}
+
+/* react-flow edges, themed + humanized.
+ * Edge encoding makes "which branch does this node belong to" instantly legible:
+ *   SOLID  = branch LINEAGE (the node IS a step in that line):
+ *            PARENT_CHILD (neutral), BRANCH fork-origin (accent), MERGE_PARENT (amber).
+ *   DOTTED = ATTACHMENT / OBSERVATION (the node REFERS to its target, not part of its
+ *            lineage): VALIDATES/CHECKS/STRESSES (observing, green) and DERIVED_FROM
+ *            (read-only context — analysis/plan derived from a node, violet). */
+.react-flow__edge-path {
+  stroke: var(--border-strong);
+  stroke-width: 1.5;
+}
+/* attachment / observation — dotted */
+.spork-edge-VALIDATES .react-flow__edge-path,
+.spork-edge-CHECKS .react-flow__edge-path,
+.spork-edge-STRESSES .react-flow__edge-path {
+  stroke: var(--ok);
+  stroke-dasharray: 2 4;
+  stroke-linecap: round;
+  opacity: 0.85;
+}
+.spork-edge-DERIVED_FROM .react-flow__edge-path {
+  stroke: #a78bfa;
+  stroke-dasharray: 2 4;
+  stroke-linecap: round;
+  opacity: 0.85;
+}
+/* lineage — solid */
+.spork-edge-MERGE_PARENT .react-flow__edge-path {
+  stroke: var(--warn);
+}
+.spork-edge-BRANCH .react-flow__edge-path {
+  stroke: var(--accent);
+  opacity: 0.7;
+}
+.react-flow__edge .react-flow__edge-text {
+  fill: var(--fg-muted);
+  font-size: 9px;
+}
+.react-flow__edge .react-flow__edge-textbg {
+  fill: var(--bg-sunken);
+}
+
+/* canvas controls (zoom/fit/minimap/search) */
+.spork-canvas-controls {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
   display: flex;
   gap: 4px;
-  margin: 8px 0;
+  padding: 4px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-control);
+  box-shadow: var(--elev-1);
+  z-index: 5;
+}
+.spork-canvas-search {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  z-index: 5;
+  width: 220px;
+}
+.spork-minimap {
+  border: 1px solid var(--border-subtle) !important;
+  border-radius: var(--r-control);
+  overflow: hidden;
 }
 
-.spork-details-tabs button.active {
-  border-color: #3b82f6;
+/* empty state */
+.spork-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+  color: var(--fg-muted);
 }
-
-.spork-runrail {
-  border-top: 1px solid var(--border);
-  background: var(--panel-bg);
-  max-height: 160px;
-  overflow: auto;
-  padding: 6px 10px;
+.spork-empty-icon {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-card);
+  background: var(--bg-raised);
+  color: var(--accent);
 }
-
-.spork-runrail-log,
-.spork-conversation-log {
-  white-space: pre-wrap;
-  font-family: ui-monospace, monospace;
-  margin: 0;
+.spork-empty h3 {
+  color: var(--fg);
 }
-
-.spork-activity-log {
-  list-style: none;
-  margin: 0 0 6px;
-  padding: 0;
-  font-family: ui-monospace, monospace;
-  font-size: 12px;
-}
-
-.spork-activity-line {
+.spork-empty-actions {
   display: flex;
   gap: 8px;
-  padding: 1px 0;
-  line-height: 1.4;
+  margin-top: 4px;
+}
+/* Inline error under the onboarding actions (always visible, regardless of the
+   collapsible activity rail). */
+.spork-error {
+  margin-top: 10px;
+  padding: 8px 12px;
+  border-radius: var(--r-control);
+  background: color-mix(in srgb, var(--status-failed, #ef4444) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-failed, #ef4444) 45%, transparent);
+  color: var(--fg);
+  font-size: 12px;
 }
 
-.spork-activity-ts {
-  color: var(--muted);
+/* generic banner (disconnected) */
+.spork-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  font-size: 12px;
+  background: #2a230f;
+  border-bottom: 1px solid #5a4a1a;
+  color: #f0d98a;
+}
+.spork-banner .spork-banner-spacer {
+  flex: 1;
+}
+/* The first-run "no project open" banner is informational, not an alarm. */
+.spork-banner--info {
+  background: #0f2030;
+  border-bottom-color: #1d4163;
+  color: #8ab8e6;
+}
+
+/* ------------------------------------------------------------------ details */
+
+.spork-details {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border-subtle);
+  overflow: hidden;
+}
+.spork-details-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 100%;
+  color: var(--fg-faint);
+  padding: 24px;
+  text-align: center;
+}
+.spork-details-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.spork-details-kind {
+  font-weight: 600;
+}
+.spork-details-id {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-faint);
+}
+.spork-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.spork-tab {
+  appearance: none;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 9px 10px;
+  cursor: pointer;
+}
+.spork-tab:hover {
+  color: var(--fg);
+}
+.spork-tab[aria-selected="true"] {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+}
+.spork-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.spork-details-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--pad-panel);
+}
+
+/* changes (diff) */
+.spork-diff-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.spork-paths {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.spork-path {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+.spork-path:hover {
+  background: var(--bg-raised);
+}
+.spork-path--active {
+  background: var(--accent-quiet);
+}
+.spork-path-mark {
+  width: 12px;
+  text-align: center;
+  font-weight: 700;
+}
+.spork-path-mark[data-k="add"] {
+  color: var(--ok);
+}
+.spork-path-mark[data-k="del"] {
+  color: var(--danger);
+}
+.spork-path-mark[data-k="mod"] {
+  color: var(--warn);
+}
+.spork-diff-editor {
+  height: 340px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-control);
+  overflow: hidden;
+}
+
+/* info tab */
+.spork-info {
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  gap: 8px 12px;
+  align-items: baseline;
+  font-size: 12px;
+}
+.spork-info dt {
+  color: var(--fg-muted);
+}
+.spork-info dd {
+  margin: 0;
+}
+.spork-info code {
+  font-size: 11px;
+}
+.spork-parent-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  padding: 2px 0;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+.spork-parent-link:hover {
+  text-decoration: underline;
+}
+.spork-fwd-note {
+  margin-top: 18px;
+  padding: 10px 12px;
+  font-size: 11px;
+  color: var(--fg-faint);
+  background: var(--bg-raised);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--r-control);
+}
+
+/* ------------------------------------------------------------------ rail */
+
+.spork-rail {
+  display: flex;
+  flex-direction: column;
+  max-height: 200px;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-subtle);
+}
+.spork-rail[data-collapsed="true"] {
+  max-height: none;
+}
+.spork-rail-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.spork-rail-tab {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 8px;
+  border-radius: var(--r-control);
+  cursor: pointer;
+}
+.spork-rail-tab[aria-selected="true"] {
+  color: var(--fg);
+  background: var(--bg-raised);
+}
+.spork-rail-tab[disabled] {
+  color: var(--fg-faint);
+  cursor: default;
+}
+.spork-rail-spacer {
+  flex: 1;
+}
+.spork-activity {
+  list-style: none;
+  margin: 0;
+  padding: 6px 10px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.spork-activity-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 1px 0;
+}
+.spork-activity-ico {
   flex: 0 0 auto;
+  position: relative;
+  top: 2px;
+}
+.spork-activity-ts {
+  flex: 0 0 auto;
+  color: var(--fg-faint);
   font-variant-numeric: tabular-nums;
 }
-
-.spork-activity-info .spork-activity-text {
-  color: var(--muted);
+.spork-activity-text {
+  color: var(--fg);
 }
-
-.spork-activity-success .spork-activity-text {
-  color: #22c55e;
+.spork-activity-line[data-level="info"] .spork-activity-ico {
+  color: var(--info);
 }
-
-.spork-activity-error .spork-activity-text {
-  color: #f87171;
+.spork-activity-line[data-level="success"] .spork-activity-ico {
+  color: var(--ok);
 }
-
+.spork-activity-line[data-level="error"] .spork-activity-ico {
+  color: var(--danger);
+}
+.spork-activity-line[data-level="error"] .spork-activity-text {
+  color: #ffb4ae;
+}
 .spork-activity-empty {
-  font-family: ui-monospace, monospace;
+  color: var(--fg-faint);
+  padding: 6px 10px;
   font-size: 12px;
+}
+.spork-activity-node {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+}
+.spork-activity-node:hover {
+  text-decoration: underline;
+}
+
+/* status sub-strip (part of region 5) */
+.spork-substrip {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 26px;
+  padding: 0 12px;
+  font-size: 11px;
+  color: var(--fg-muted);
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-subtle);
+}
+.spork-substrip-sep {
+  color: var(--border-strong);
+}
+.spork-substrip .mono {
+  color: var(--fg);
+}
+
+/* ------------------------------------------------------------------ overlays */
+
+.spork-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  background: rgba(5, 7, 12, 0.55);
+  backdrop-filter: blur(2px);
+}
+.spork-modal {
+  width: min(560px, 92vw);
+  background: var(--bg-overlay);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-panel);
+  box-shadow: var(--elev-3);
+  overflow: hidden;
+}
+.spork-modal-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.spork-modal-title {
+  font-size: 14px;
+}
+.spork-modal-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.spork-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-subtle);
+}
+.spork-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.spork-field label {
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+.spork-field input,
+.spork-field select,
+.spork-field textarea {
+  width: 100%;
+}
+.spork-field textarea {
+  resize: vertical;
+  font: inherit;
+  min-height: 56px;
+}
+.spork-warn-box {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: #f0d98a;
+  background: #2a230f;
+  border: 1px solid #5a4a1a;
+  border-radius: var(--r-control);
+}
+.spork-warn-box.spork-warn-box--danger {
+  color: #ffc2bd;
+  background: #2a1414;
+  border-color: #5a2a2a;
+}
+.spork-modal-note {
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+/* command palette */
+.spork-palette {
+  width: min(560px, 92vw);
+  background: var(--bg-overlay);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-panel);
+  box-shadow: var(--elev-3);
+  overflow: hidden;
+}
+.spork-palette-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--fg-faint);
+}
+.spork-palette-input input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: 14px;
+  color: var(--fg);
+}
+.spork-palette-input input:focus-visible {
+  outline: none;
+}
+.spork-palette-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  max-height: 320px;
+  overflow: auto;
+}
+.spork-palette-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--r-control);
+  cursor: pointer;
+  font-size: 13px;
+}
+.spork-palette-item--active {
+  background: var(--accent-quiet);
+}
+.spork-palette-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--fg-faint);
+  font-size: 13px;
+}
+
+/* context menu */
+.spork-ctxmenu {
+  position: fixed;
+  z-index: 60;
+  min-width: 210px;
+  /* Never taller/wider than the viewport — a long menu scrolls instead of
+     clipping below the bottom edge (paired with the JS viewport clamp). */
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  padding: 5px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-control);
+  box-shadow: var(--elev-2);
+}
+.spork-ctx-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 9px;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.spork-ctx-item:hover {
+  background: var(--bg-raised);
+}
+.spork-ctx-item:disabled {
+  color: var(--fg-faint);
+  cursor: not-allowed;
+}
+.spork-ctx-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border-subtle);
+}
+.spork-ctx-shortcut {
+  margin-left: auto;
+  color: var(--fg-faint);
+  font-size: 11px;
+}
+
+/* settings popover */
+.spork-popover {
+  /* Positioned by its wrapper in TopBar (an absolute `top:100% right:0` div);
+     this box must NOT also be absolute or it ignores that anchor and overflows
+     off the right edge of the window (double-absolute bug). */
+  position: relative;
+  z-index: 40;
+  width: 300px;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-panel);
+  box-shadow: var(--elev-2);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.spork-popover-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.spork-seg {
+  display: inline-flex;
+  padding: 2px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-control);
+}
+.spork-seg button {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.spork-seg button[aria-pressed="true"] {
+  background: var(--accent-quiet);
+  color: var(--fg);
+}
+.spork-row-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .spork-muted {
-  color: var(--muted);
+  color: var(--fg-muted);
+}
+.spork-faint {
+  color: var(--fg-faint);
 }
 
-.spork-results {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 2px 12px;
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
 }
 
-.spork-results dt {
-  color: var(--muted);
+/* ── P7: gate verdict badge + lineage/context panel (DESIGN §8.3, §13.x) ── */
+.spork-gate {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: capitalize;
+  border: 1px solid var(--spork-border, #2a2f3a);
 }
+.spork-gate[data-decision="pass"] { color: #22c55e; border-color: #22c55e55; }
+.spork-gate[data-decision="warn"] { color: #f59e0b; border-color: #f59e0b55; }
+.spork-gate[data-decision="blocked"] { color: #ef4444; border-color: #ef444455; }
+.spork-gate[data-decision="overridden"] { color: #a78bfa; border-color: #a78bfa55; }
+.spork-gate-reasons { margin-top: 3px; font-size: 11px; }
 
-.spork-diff-paths {
-  list-style: none;
-  margin: 0 0 8px;
-  padding: 0;
+.spork-lineage-panel { margin: 10px 0 6px; }
+.spork-lineage-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.spork-lineage-actions button {
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--spork-border, #2a2f3a);
+  background: var(--spork-surface-2, #1a1f29);
+  color: var(--spork-text, #e6e9ef);
+  cursor: pointer;
+}
+.spork-lineage-actions button:disabled { opacity: 0.5; cursor: default; }
+.spork-lineage-result {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--spork-border, #2a2f3a);
+  background: var(--spork-surface-2, #1a1f29);
+  font-size: 11px;
+}
+.spork-lineage-result strong { display: block; margin-bottom: 3px; font-size: 11px; }
+.spork-checkbox { display: flex; align-items: center; gap: 7px; margin-top: 10px; font-size: 12px; }
+
+/* ============================================================================
+ * R2 — Timeline-first reframe (REALIGNMENT_PLAN §5): line breadcrumb, view
+ * toggle, "+ New node" menu, LINES navigator, swimlanes, the hero chat.
+ * ========================================================================== */
+
+/* Status-dot tones reused outside .spork-status (chat turns, result, line dots). */
+[data-status="passed"] > .spork-status-dot,
+.spork-result-headline[data-status="passed"] .spork-status-dot { background: var(--ok); }
+.spork-turn-state[data-status="passed"] { color: var(--ok); }
+.spork-turn-state[data-status="failed"] { color: var(--danger); }
+.spork-turn-state[data-status="running"] { color: var(--info); }
+.spork-turn-state[data-status="pending"] { color: var(--neutral); }
+.spork-turn-state[data-status="blocked"] { color: var(--warn); }
+.spork-turn-state[data-status="cancelled"] { color: var(--fg-faint); }
+
+/* TopBar — informational line breadcrumb (replaces the branch switcher). */
+.spork-line-crumb {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 9px; border-radius: 999px;
+  color: var(--fg-muted); font-size: 12px;
+  background: var(--bg-sunken); border: 1px solid var(--border-subtle);
+}
+.spork-line-name { color: var(--fg); font-weight: 600; }
+.spork-viewtoggle button { display: inline-flex; align-items: center; gap: 5px; }
+
+/* "+ New node from here" menu. */
+.spork-newnode-menu { min-width: 250px; padding: 4px; }
+.spork-ctx-eyebrow {
+  display: block; padding: 5px 9px 3px; font-size: 10px; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--fg-faint);
+}
+.spork-newnode-group { padding: 2px 0; }
+.spork-newnode-group + .spork-newnode-group {
+  margin-top: 2px; border-top: 1px solid var(--border-subtle); padding-top: 4px;
+}
+.spork-ctx-grouplabel {
+  display: block; padding: 2px 9px; font-size: 10px; font-weight: 700;
+  letter-spacing: 0.05em; color: var(--accent);
+}
+.spork-newnode-item { align-items: flex-start; gap: 9px; }
+.spork-newnode-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.spork-newnode-label { font-size: 12px; color: var(--fg); }
+.spork-newnode-help { font-size: 10px; color: var(--fg-faint); }
+.spork-newnode-item:disabled { opacity: 0.4; }
+
+/* Navigator — LINES overview. */
+.spork-line-row { gap: 8px; }
+.spork-line-dot {
+  width: 9px; height: 9px; border-radius: 50%; flex: none;
+  background: var(--neutral);
+}
+.spork-line-dot[data-rollup="passed"] { background: var(--ok); }
+.spork-line-dot[data-rollup="running"] { background: var(--info); }
+.spork-line-dot[data-rollup="blocked"] { background: var(--warn); }
+.spork-line-dot[data-rollup="failed"] { background: var(--danger); }
+.spork-line-dot[data-rollup="pending"] { background: transparent; border: 1.5px solid var(--neutral); }
+.spork-line-rowname { flex: 1; min-width: 0; white-space: nowrap; }
+.spork-line-forkmark { color: var(--accent); margin-right: 1px; }
+
+/* Canvas — swimlane bands (one per emergent line). */
+.spork-lanes-layer { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+.spork-lane-band {
+  border-top: 1px dashed var(--border-subtle);
+  border-bottom: 1px dashed var(--border-subtle);
+  transition: background 0.15s ease, opacity 0.15s ease;
+}
+.spork-lane-band[data-lane-index="1"] { background: rgba(124, 140, 255, 0.025); }
+.spork-lane-band[data-lane-index="0"] { background: rgba(255, 255, 255, 0.012); }
+.spork-lane-band--focused {
+  background: var(--accent-quiet);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.spork-lane-band--dim { opacity: 0.4; }
+.spork-lane-gutter {
+  position: absolute; top: 6px; left: 8px; pointer-events: auto;
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border-radius: 999px;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.02em;
+  color: var(--fg-muted);
+  background: var(--bg-surface); border: 1px solid var(--border-subtle);
+  cursor: pointer;
+}
+.spork-lane-gutter:hover { color: var(--fg); border-color: var(--border-strong); }
+.spork-lane-fork { color: var(--accent); }
+
+/* ----- Hero chat — a first-class view of one line (messages are nodes). -----
+ * A calm, focused surface (Gemini-inspired): a quiet near-black field, a single
+ * soft glow that follows the active agentic mode's color, generous space, and a
+ * rounded composer "card" as the focal point. Every turn still carries its node
+ * identity — the point that sets Spork's chat apart. */
+.spork-chat {
+  --mode: var(--accent);
+  position: relative;
+  display: flex; flex-direction: column; height: 100%; min-height: 0;
+  background: var(--bg-sunken);
+  overflow: hidden;
+}
+/* The ambient glow — low, centered, mode-tinted. */
+.spork-chat::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 0;
+  background:
+    radial-gradient(60% 50% at 50% 78%, color-mix(in srgb, var(--mode) 11%, transparent), transparent 70%);
+  transition: background 0.4s ease;
+}
+.spork-chat > * { position: relative; z-index: 1; }
+.spork-chat-empty {
+  margin: auto; text-align: center; color: var(--fg-muted);
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+}
+.spork-chat-empty h3 { margin: 4px 0 0; color: var(--fg); }
+.spork-chat-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 13px 18px;
+}
+.spork-chat-linemark {
+  display: inline-flex; padding: 6px; border-radius: 9px;
+  color: var(--mode); background: color-mix(in srgb, var(--mode) 16%, transparent);
+}
+.spork-chat-headtext { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+.spork-chat-linename { font-weight: 650; font-size: 14px; color: var(--fg); letter-spacing: -0.01em; }
+.spork-chat-linesub { font-size: 11px; color: var(--fg-faint); }
+.spork-chat-jump {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 6px 11px; border-radius: 999px; font-size: 12px;
+  color: var(--fg-muted); background: color-mix(in srgb, var(--bg-surface) 70%, transparent);
+  border: 1px solid var(--border-subtle); cursor: pointer; backdrop-filter: blur(8px);
+}
+.spork-chat-jump:hover { color: var(--fg); border-color: var(--border-strong); }
+.spork-chat-thread {
+  position: relative; flex: 1; min-height: 0; overflow-y: auto;
+  padding: 20px 22px 20px 30px;
+  scrollbar-width: thin;
+}
+/* When the line has no turns yet: a calm centered welcome (the Gemini moment). */
+.spork-chat-thread--empty { display: flex; align-items: center; justify-content: center; padding-bottom: 8vh; }
+.spork-chat-welcome {
+  text-align: center; max-width: 460px;
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  animation: spork-rise 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.spork-chat-orb {
+  width: 54px; height: 54px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--mode) 90%, white), var(--mode) 60%, color-mix(in srgb, var(--mode) 40%, black));
+  box-shadow: 0 0 36px color-mix(in srgb, var(--mode) 55%, transparent), inset 0 -4px 10px rgba(0,0,0,0.35);
+  animation: spork-breathe 5s ease-in-out infinite;
+}
+.spork-chat-greeting {
+  margin: 0; font-size: 30px; font-weight: 500; letter-spacing: -0.02em;
+  color: var(--fg);
+  background: linear-gradient(180deg, var(--fg), color-mix(in srgb, var(--fg) 62%, var(--mode)));
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+}
+.spork-chat-subtle { margin: 0; font-size: 13.5px; line-height: 1.6; color: var(--fg-muted); }
+.spork-chat-subtle strong { color: var(--fg); font-weight: 600; }
+@keyframes spork-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes spork-breathe { 0%, 100% { transform: scale(1); opacity: 0.92; } 50% { transform: scale(1.06); opacity: 1; } }
+.spork-chat-spine {
+  position: absolute; left: 37px; top: 22px; bottom: 22px; width: 2px;
+  background: linear-gradient(color-mix(in srgb, var(--mode) 40%, var(--border-subtle)), transparent);
+}
+.spork-turn { position: relative; display: flex; gap: 14px; padding: 6px 0 18px; }
+.spork-turn-node {
+  position: relative; z-index: 1; flex: none;
+  width: 22px; height: 22px; border-radius: 7px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: #0b0e16;
+  box-shadow: 0 0 0 4px var(--bg-base);
+}
+.spork-turn-body {
+  flex: 1; min-width: 0;
+  background: var(--bg-surface); border: 1px solid var(--border-subtle);
+  border-radius: 12px; padding: 11px 13px;
+}
+.spork-turn--selected .spork-turn-body {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.spork-turn-msg + .spork-turn-msg { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border-subtle); }
+.spork-turn-role {
+  font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg-faint);
+}
+.spork-turn-msg[data-role="user"] .spork-turn-role { color: var(--accent); }
+.spork-turn-text { margin: 3px 0 0; white-space: pre-wrap; line-height: 1.5; color: var(--fg); font-size: 13px; }
+.spork-turn-tool { margin: 2px 0 0; font-size: 11px; }
+.spork-turn-meta {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  margin-top: 9px; padding-top: 8px; border-top: 1px solid var(--border-subtle);
+  font-size: 10px; color: var(--fg-faint);
+}
+.spork-turn-kind { font-weight: 700; }
+.spork-turn-state { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; }
+.spork-turn-state .spork-status-dot { width: 7px; height: 7px; }
+.spork-turn-open {
+  margin-left: auto; color: var(--accent); cursor: pointer;
+  background: none; border: none; font-size: 10px;
+}
+.spork-turn-open:hover { color: var(--accent-hover); }
+.spork-chat-event {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  margin: 0 0 12px 36px; padding: 5px 11px;
+  background: var(--bg-sunken); border: 1px dashed var(--border-subtle);
+  border-radius: 999px; color: var(--fg-muted); font-size: 11px; cursor: pointer;
+}
+.spork-chat-event:hover { border-color: var(--border-strong); }
+.spork-chat-event--selected { border-style: solid; border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+.spork-chat-eventkind { font-weight: 600; color: var(--fg); }
+
+/* Composer — a single rounded card; the agentic mode tints its glow + send. */
+.spork-composer {
+  padding: 6px 18px 16px;
+  display: flex; flex-direction: column; align-items: center; gap: 7px;
+}
+.spork-composer-card {
+  width: 100%; max-width: 760px;
+  background: color-mix(in srgb, var(--bg-raised) 88%, transparent);
+  border: 1px solid var(--border-strong); border-radius: 22px;
+  padding: 12px 14px 10px;
+  box-shadow: var(--elev-2);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.spork-composer-card:focus-within {
+  border-color: color-mix(in srgb, var(--mode) 60%, transparent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--mode) 16%, transparent), var(--elev-2);
+}
+.spork-composer-input {
+  width: 100%; resize: none; min-height: 26px; max-height: 220px;
+  background: transparent; color: var(--fg);
+  border: none; padding: 2px 4px 6px;
+  font-family: var(--font-ui); font-size: 14.5px; line-height: 1.5;
+}
+.spork-composer-input::placeholder { color: var(--fg-faint); }
+.spork-composer-input:focus { outline: none; }
+.spork-composer-bar { display: flex; align-items: center; gap: 8px; }
+.spork-composer-modes { display: inline-flex; gap: 5px; flex-wrap: wrap; }
+.spork-mode {
+  --mc: var(--accent);
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 10px; border-radius: 999px; font-size: 12px; cursor: pointer;
+  color: var(--fg-muted);
+  background: transparent; border: 1px solid transparent;
+  transition: all 0.15s ease;
+}
+.spork-mode:hover { color: var(--fg); background: var(--bg-overlay); }
+.spork-mode--on {
+  color: var(--mc); border-color: color-mix(in srgb, var(--mc) 50%, transparent);
+  background: color-mix(in srgb, var(--mc) 15%, transparent);
+}
+.spork-composer-model {
+  display: inline-flex; align-items: center; gap: 3px; color: var(--fg-muted); font-size: 12px;
+  padding: 3px 4px 3px 9px; border-radius: 999px; border: 1px solid var(--border-subtle);
+  background: var(--bg-sunken);
+}
+.spork-composer-model select {
+  background: transparent; color: var(--fg); border: none; font-size: 12px;
+  padding: 0; -webkit-appearance: none; appearance: none; cursor: pointer; outline: none;
+}
+.spork-composer-setup {
+  display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+  padding: 4px 11px; border-radius: 999px; font-size: 12px;
+  color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+}
+.spork-composer-send-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; border-radius: 50%; cursor: pointer; flex: none;
+  color: var(--on-accent); background: var(--mode); border: none;
+  transition: transform 0.12s ease, filter 0.15s ease, background 0.2s ease;
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--mode) 45%, transparent);
+}
+.spork-composer-send-btn:hover:not(:disabled) { filter: brightness(1.08); transform: translateY(-1px); }
+.spork-composer-send-btn:disabled { background: var(--bg-overlay); color: var(--fg-faint); box-shadow: none; cursor: default; }
+.spork-composer-context { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; margin: 0; }
+
+/* Node-Details — Result tab headline. */
+.spork-result-headline {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 13px; color: var(--fg); margin-bottom: 8px;
+}
+.spork-result-headline[data-status="failed"] .spork-status-dot { background: var(--danger); }
+.spork-result-headline[data-status="running"] .spork-status-dot { background: var(--info); }
+.spork-result-headline[data-status="blocked"] .spork-status-dot { background: var(--warn); }
+.spork-result-headline[data-status="pending"] .spork-status-dot { background: var(--neutral); }
+.spork-mono { font-family: var(--font-mono); }
+
+/* ----- Resizable panels (drag handles on the nav / details / rail edges). ----- */
+.spork-nav, .spork-details, .spork-rail { position: relative; }
+.spork-resize { position: absolute; z-index: 20; touch-action: none; }
+.spork-resize--x { top: 0; bottom: 0; width: 8px; cursor: col-resize; }
+.spork-resize--y { left: 0; right: 0; height: 8px; cursor: row-resize; }
+.spork-nav > .spork-resize--x { right: -4px; }
+.spork-details > .spork-resize--x { left: -4px; }
+.spork-rail > .spork-resize--y { top: -4px; }
+.spork-resize::after {
+  content: ""; position: absolute; background: transparent; border-radius: 2px;
+  transition: background 0.15s ease;
+}
+.spork-resize--x::after { top: 0; bottom: 0; left: 50%; width: 2px; transform: translateX(-50%); }
+.spork-resize--y::after { left: 0; right: 0; top: 50%; height: 2px; transform: translateY(-50%); }
+.spork-resize:hover::after,
+.spork-resize:focus-visible::after { background: var(--accent); }
+.spork-resize:focus-visible { outline: none; }
+body.spork-resizing { user-select: none; }
+body.spork-resizing iframe { pointer-events: none; }
+
+/* ----- Settings: driving-model + orchestrator sections. ----- */
+.spork-model-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.spork-model-chips .spork-chip { max-width: none; color: var(--fg); }
+.spork-pill-soon {
+  font-size: 9.5px; letter-spacing: 0.04em; text-transform: uppercase; font-weight: 700;
+  padding: 2px 7px; border-radius: 999px;
+  color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
+}
+.spork-byok {
+  margin-top: 6px; padding-top: 10px; border-top: 1px dashed var(--border-subtle);
+  display: flex; flex-direction: column; gap: 7px;
+}
+.spork-byok input:disabled { opacity: 0.55; cursor: not-allowed; }
+.spork-code-line {
+  display: block; font-family: var(--font-mono); font-size: 11px;
+  color: var(--fg-muted); background: var(--bg-sunken);
+  border: 1px solid var(--border-subtle); border-radius: 7px;
+  padding: 7px 9px; overflow-x: auto; white-space: nowrap;
 }

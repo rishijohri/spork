@@ -26,7 +26,13 @@ use spork_graph::{EdgeType, Family, Lifecycle, RefKind};
 use ulid::Ulid;
 
 /// The schema version of the [`GraphView`] read snapshot (CLAUDE.md C5).
-pub const GRAPH_VIEW_SCHEMA_VERSION: u16 = 1;
+///
+/// v2 (R2, REALIGNMENT_PLAN.md §5a) adds the additive `Option` `NodeView` fields
+/// `presentationStatus`/`lineLabel`/`forkedFrom`. **No migration is registered:**
+/// `GraphView` is a transient projection rebuilt on every read, never persisted —
+/// the version bump only signals the wider shape to a binding (same as the P6
+/// `cost` / P7 `gate` additions; PLAN §9 D-4 covers *persisted* schemas only).
+pub const GRAPH_VIEW_SCHEMA_VERSION: u16 = 2;
 
 /// A denormalized read snapshot of the whole work-DAG for the renderer.
 ///
@@ -78,6 +84,112 @@ pub struct NodeView {
     pub parent_ids: Vec<Ulid>,
     /// The model attributed to this node, if any.
     pub model: Option<String>,
+    /// The per-node cost record, if any (P6: an agent-run attaches its priced
+    /// cost; the renderer sums these for the per-branch ledger, DESIGN §12.5).
+    /// Additive view field (CLAUDE.md C5) — `None` for every node that carries
+    /// no cost, exactly as before.
+    pub cost: Option<CostView>,
+    /// The gate verdict this node carries, if it is a gate-verdict node (P7,
+    /// DESIGN §8.3). Additive view field (CLAUDE.md C5) — `None` for every
+    /// non-gate node, exactly as before.
+    pub gate: Option<GateVerdictView>,
+    /// The per-type **presentation status** this node carries in its own payload
+    /// (REALIGNMENT_PLAN.md §3b) — the rich agentic state (`thinking`,
+    /// `awaiting_input`, `require_review`, …) the frozen [`Lifecycle`] cannot
+    /// represent. Read kind-gated and best-effort (mirroring `gate`), so only
+    /// agentic nodes pay the payload fetch. **Additive view field (CLAUDE.md
+    /// C5)** — `None` for every node until the R3 agent-loop producer emits it;
+    /// the renderer falls back to `effective_status(status, is_stale)` for the
+    /// badge when it is absent.
+    pub presentation_status: Option<String>,
+    /// A friendly, human label for this node's **line** (lane) — the emergent
+    /// line a `branchId` denotes, never user-facing git chrome
+    /// (REALIGNMENT_PLAN.md §1). Lets the canvas swimlanes and the chat show one
+    /// consistent lane name instead of a raw id. Additive view field (CLAUDE.md
+    /// C5).
+    pub line_label: Option<String>,
+    /// The node this line **forked from** — `Some(parent)` iff this node starts a
+    /// new line (its `branchId` differs from its first parent's `branchId`), so
+    /// the canvas can draw the fork connector between lanes (REALIGNMENT_PLAN.md
+    /// §5a). `None` for a node continuing its parent's line. Additive view field
+    /// (CLAUDE.md C5).
+    pub forked_from: Option<Ulid>,
+}
+
+/// The renderer-facing projection of a gate verdict (P7, DESIGN §8.3).
+///
+/// A camelCase mirror of the `spork-gates` `GateVerdict` for the TypeScript
+/// binding: the decision badge, the severity, the explaining reasons, and the
+/// override audit (if the verdict was overridden). The `lineageHash` is the
+/// snapshot the verdict was computed against — what makes it travel with the
+/// snapshot (DESIGN §8.3, PLAN §9 D-12).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GateVerdictView {
+    /// The policy that produced the verdict.
+    pub policy_id: String,
+    /// The gated transition (`merge`, `promote-branch`, …).
+    pub transition: String,
+    /// The decision (`pass` / `warn` / `blocked` / `overridden`).
+    pub decision: String,
+    /// The policy severity (`block` / `warn`).
+    pub severity: String,
+    /// The explaining reasons.
+    pub reasons: Vec<String>,
+    /// The lineage hash of the snapshot the verdict was computed against (hex).
+    pub lineage_hash: String,
+    /// Whether the verdict was overridden (a visible audit).
+    pub overridden: bool,
+}
+
+impl From<spork_gates::GateVerdict> for GateVerdictView {
+    fn from(v: spork_gates::GateVerdict) -> Self {
+        let decision = match v.decision {
+            spork_gates::Decision::Pass => "pass",
+            spork_gates::Decision::Warn => "warn",
+            spork_gates::Decision::Blocked => "blocked",
+            spork_gates::Decision::Overridden => "overridden",
+        };
+        let severity = match v.severity {
+            spork_gates::Severity::Block => "block",
+            spork_gates::Severity::Warn => "warn",
+        };
+        GateVerdictView {
+            policy_id: v.policy_id,
+            transition: v.transition.label().to_string(),
+            decision: decision.to_string(),
+            severity: severity.to_string(),
+            reasons: v.reasons,
+            lineage_hash: v.lineage_hash.to_hex(),
+            overridden: v.override_audit.is_some(),
+        }
+    }
+}
+
+/// The renderer-facing projection of a node's cost (P6, DESIGN §12.5).
+///
+/// A camelCase mirror of [`spork_graph::CostRecord`] for the TypeScript binding;
+/// every figure is an integer (tokens, micro-USD) so it round-trips through the
+/// canonical encoder that forbids floats.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CostView {
+    /// Total prompt/input tokens (uncached + cache read + write).
+    pub input_tokens: u64,
+    /// Completion/output tokens produced.
+    pub output_tokens: u64,
+    /// Total spend in micro-USD (millionths of a dollar), as an integer.
+    pub micro_usd: u64,
+}
+
+impl From<spork_graph::CostRecord> for CostView {
+    fn from(c: spork_graph::CostRecord) -> Self {
+        CostView {
+            input_tokens: c.input_tokens,
+            output_tokens: c.output_tokens,
+            micro_usd: c.micro_usd,
+        }
+    }
 }
 
 /// The renderer-facing projection of one typed edge.
@@ -145,6 +257,11 @@ mod tests {
                     branch_id: "main".into(),
                     parent_ids: vec![],
                     model: None,
+                    cost: None,
+                    gate: None,
+                    presentation_status: None,
+                    line_label: Some("main".into()),
+                    forked_from: None,
                 },
                 NodeView {
                     id: b,
@@ -157,6 +274,15 @@ mod tests {
                     branch_id: "main".into(),
                     parent_ids: vec![a],
                     model: Some("gpt".into()),
+                    cost: Some(CostView {
+                        input_tokens: 1_000,
+                        output_tokens: 200,
+                        micro_usd: 4_500,
+                    }),
+                    gate: None,
+                    presentation_status: Some("thinking".into()),
+                    line_label: Some("agent · 01ABCDEF".into()),
+                    forked_from: Some(a),
                 },
             ],
             edges: vec![EdgeView {
@@ -190,6 +316,19 @@ mod tests {
         assert!(node.get("snapshotHash").is_some());
         assert!(node.get("parentIds").is_some());
         assert!(v["edges"][0].get("edgeType").is_some());
+        // The P6 cost view serializes camelCase under each node.
+        let priced = &v["nodes"][1]["cost"];
+        assert_eq!(priced["inputTokens"], 1_000);
+        assert_eq!(priced["outputTokens"], 200);
+        assert_eq!(priced["microUsd"], 4_500);
+        // The R2 additive view fields serialize camelCase, skip-if-none.
+        assert_eq!(v["schemaVersion"], 2);
+        let agentic = &v["nodes"][1];
+        assert_eq!(agentic["presentationStatus"], "thinking");
+        assert_eq!(agentic["lineLabel"], "agent · 01ABCDEF");
+        assert!(agentic.get("forkedFrom").is_some());
+        // A node continuing its line carries no fork origin.
+        assert_eq!(v["nodes"][0]["forkedFrom"], serde_json::Value::Null);
     }
 
     #[test]

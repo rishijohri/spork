@@ -70,6 +70,17 @@ pub(crate) fn build_graph_view(core: &DaemonCore) -> GraphView {
             branch_id: env.branch_id.clone(),
             parent_ids: env.parent_ids.clone(),
             model: env.model.clone(),
+            cost: env.cost.clone().map(Into::into),
+            // P7: a gate-verdict node surfaces its verdict for the canvas badge.
+            // Cheap (only gate nodes fetch their payload) and best-effort.
+            gate: gate_verdict_view(core, env),
+            // R2 (REALIGNMENT_PLAN.md §5a): the per-type state badge (kind-gated
+            // payload read, `None` until the R3 producer), a friendly line label,
+            // and the line's fork origin — all additive, derived from the same
+            // projection state.
+            presentation_status: presentation_status_view(core, env),
+            line_label: line_label_for(&env.branch_id),
+            forked_from: forked_from(&state, env),
         })
         .collect();
 
@@ -99,6 +110,68 @@ pub(crate) fn build_graph_view(core: &DaemonCore) -> GraphView {
         edges,
         refs,
     }
+}
+
+/// The gate-verdict view for a node, or `None` if it is not a gate node (or its
+/// verdict payload is absent/malformed). Only gate-kind nodes pay the payload
+/// fetch (DESIGN §8.3).
+fn gate_verdict_view(
+    core: &DaemonCore,
+    env: &spork_graph::NodeEnvelope,
+) -> Option<crate::view::GateVerdictView> {
+    if env.kind != crate::gate::GATE_KIND {
+        return None;
+    }
+    let (payload, _) = core.graph.get_payload(env.id).ok()??;
+    let verdict = crate::gate::verdict_from_payload(&payload)?;
+    Some(verdict.into())
+}
+
+/// The per-type **presentation status** a node carries in its own payload
+/// (REALIGNMENT_PLAN.md §3b), or `None`. Gated to agentic kinds (`agent-*`)
+/// exactly like [`gate_verdict_view`] is gated to gate nodes, so only agentic
+/// nodes pay the payload fetch. **No producer writes this field yet** — the R3
+/// agent-loop emits it — so it is `None` for every node today; wiring the read
+/// now keeps R3 a producer-only change (the badge flips 🟡→🟢 then).
+fn presentation_status_view(core: &DaemonCore, env: &spork_graph::NodeEnvelope) -> Option<String> {
+    if !env.kind.starts_with("agent-") {
+        return None;
+    }
+    let (payload, _) = core.graph.get_payload(env.id).ok()??;
+    payload
+        .get("presentation_status")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+}
+
+/// A friendly, consistent label for the emergent **line** a `branch_id` denotes
+/// (REALIGNMENT_PLAN.md §1) — never user-facing git chrome. `main` stays `main`;
+/// an auto-forked agent line (`agent/<ulid>`) shows `agent · <short>` so distinct
+/// lines stay distinguishable; anything else echoes its id. `None` for an empty
+/// id.
+fn line_label_for(branch_id: &str) -> Option<String> {
+    if branch_id.is_empty() {
+        return None;
+    }
+    let label = match branch_id.strip_prefix("agent/") {
+        Some(id) => format!("agent · {}", id.get(..8).unwrap_or(id)),
+        None => branch_id.to_string(),
+    };
+    Some(label)
+}
+
+/// The node this node's **line forked from** (REALIGNMENT_PLAN.md §5a):
+/// `Some(parent)` iff this node starts a new line — its `branch_id` differs from
+/// its first parent's — so the canvas draws the fork connector between lanes.
+/// `None` for a node continuing its parent's line, or a root node. The parent is
+/// resolved from the same projection state (keyed by the id string).
+fn forked_from(
+    state: &spork_graph::ProjectionState,
+    env: &spork_graph::NodeEnvelope,
+) -> Option<Ulid> {
+    let parent = env.parent_ids.first()?;
+    let parent_env = state.nodes.get(&parent.to_string())?;
+    (parent_env.branch_id != env.branch_id).then_some(*parent)
 }
 
 /// Compute the changed-path set of a node's snapshot tree against a baseline.

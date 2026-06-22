@@ -1,0 +1,15 @@
+[package]
+name = "spork-transport"
+version = "0.1.0"
+edition = "2021"
+description = "Spork P6 model-access transport seam: the `Transport` port that carries a provider's wire request to a running model and returns its wire response. Ships two real, fully-offline-testable implementations — a subprocess transport (JSONL over stdin/stdout, for agent CLIs) and a plaintext-HTTP transport (for localhost OpenAI-compatible servers: Ollama / LM Studio / vLLM / a LiteLLM proxy). The TLS/cloud transport is a documented additive impl behind the same seam (DESIGN §12.1, §12.6)."
+
+[dependencies]
+# The wire request/response are provider-neutral JSON Values produced and parsed
+# by the spork-provider adapters; the transport only moves bytes, so serde_json
+# is the one shape dependency it needs.
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

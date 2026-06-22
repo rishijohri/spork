@@ -1,18 +1,18 @@
-// Bottom status / run rail (DESIGN.md §14.2, §14.4).
+// Bottom run rail (UI_UX_DESIGN.md §5.9, §7.5).
 //
-// Two streams surface here:
-//   1. The ACTIVITY LOG — a bounded, newest-last list of every toolbar action's
-//      outcome (and any error), so actions that create no canvas node (Commit /
-//      Push / New Branch / Restore) still give the user visible feedback instead
-//      of silence. Error lines are styled distinctly (red), success greenish,
-//      info muted; each carries a timestamp. This is an accessible log region.
-//   2. The EPHEMERAL FRAMES — live test/agent output streamed via the side-
-//      channels for the SELECTED node (`ingestEphemeral`), kept as before.
+// v1 rail = the ACTIVITY tab only (op-log + action outcomes) — the real,
+// producing stream. The "Run output" tab is forward-map (🟡): nothing streams
+// onto RUN_STDOUT yet, so it renders as a disabled, labelled tab rather than a
+// dead live pane. Each activity line pairs a severity ICON with color (not
+// color-only — accessibility) and a timestamp. Collapsible; copy/clear per tab.
 
+import type { JSX } from "react";
 import { useUiStore } from "../state/store";
-import type { ActivityEntry } from "../state/store";
+import type { ActivityEntry, ActivityLevel } from "../state/store";
+import { IconButton } from "../ui/Button";
+import { ResizeHandle } from "../ui/ResizeHandle";
+import { Icon, type IconName } from "../ui/icons";
 
-/** Format an activity timestamp as a compact local HH:MM:SS. */
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString(undefined, {
     hour: "2-digit",
@@ -21,50 +21,102 @@ function formatTime(ts: number): string {
   });
 }
 
-/** The bottom run/status rail: the activity log plus the selected node's stream. */
-export function RunRail(): JSX.Element {
-  const selectedId = useUiStore((s) => s.selectedNodeId);
-  const rail = useUiStore((s) => s.rail);
-  const activity = useUiStore((s) => s.activity);
+const LEVEL_ICON: Record<ActivityLevel, IconName> = {
+  info: "info",
+  success: "check",
+  error: "x-circle",
+};
 
-  const lines = selectedId ? (rail[selectedId] ?? []) : [];
+/** The bottom status/run rail (region 5): the Activity stream. */
+export function RunRail(): JSX.Element {
+  const activity = useUiStore((s) => s.activity);
+  const railCollapsed = useUiStore((s) => s.railCollapsed);
+  const setRailCollapsed = useUiStore((s) => s.setRailCollapsed);
+  const railHeight = useUiStore((s) => s.railHeight);
+  const setRailHeight = useUiStore((s) => s.setRailHeight);
+
+  function clear(): void {
+    useUiStore.setState({ activity: [] });
+  }
+  function copy(): void {
+    const text = activity
+      .map((e) => `${formatTime(e.ts)}  ${e.text}`)
+      .join("\n");
+    try {
+      void navigator.clipboard?.writeText(text);
+    } catch {
+      /* clipboard unavailable — ignore */
+    }
+  }
 
   return (
-    <footer className="spork-runrail" aria-label="Run output">
-      <div className="spork-runrail-header">
-        <span>Run output</span>
-        {selectedId && <code className="spork-runrail-node">{selectedId}</code>}
+    <section className="spork-rail" data-collapsed={railCollapsed} aria-label="Run rail">
+      {!railCollapsed && (
+        <ResizeHandle
+          axis="y"
+          sign={-1}
+          value={railHeight}
+          min={90}
+          max={520}
+          onChange={setRailHeight}
+          label="Resize activity rail"
+        />
+      )}
+      <div className="spork-rail-head">
+        <button className="spork-rail-tab" role="tab" aria-selected={true}>
+          Activity
+        </button>
+        <button
+          className="spork-rail-tab"
+          role="tab"
+          aria-selected={false}
+          disabled
+          title="Recorded run output arrives with the action-node producer (R3/R4)"
+        >
+          Run output
+        </button>
+        <div className="spork-rail-spacer" />
+        <IconButton icon="copy" label="Copy activity" size={14} onClick={copy} />
+        <IconButton icon="trash" label="Clear activity" size={14} onClick={clear} />
+        <IconButton
+          icon={railCollapsed ? "chevron-up" : "chevron-down"}
+          label={railCollapsed ? "Expand rail" : "Collapse rail"}
+          size={14}
+          onClick={() => setRailCollapsed(!railCollapsed)}
+        />
       </div>
 
-      <ul
-        className="spork-activity-log"
-        data-testid="activity-log"
-        role="log"
-        aria-label="Activity log"
-        aria-live="polite"
-      >
-        {activity.length === 0 ? (
-          <li className="spork-muted spork-activity-empty">No activity yet.</li>
+      {!railCollapsed &&
+        (activity.length === 0 ? (
+          <div className="spork-activity-empty">No activity yet.</div>
         ) : (
-          activity.map((entry) => <ActivityLine key={entry.id} entry={entry} />)
-        )}
-      </ul>
-
-      <pre className="spork-runrail-log" data-testid="runrail-log">
-        {lines.join("")}
-      </pre>
-    </footer>
+          <ul
+            className="spork-activity"
+            data-testid="activity-log"
+            role="log"
+            aria-label="Activity log"
+            aria-live="polite"
+            style={{ maxHeight: railHeight, overflowY: "auto" }}
+          >
+            {activity.map((e) => (
+              <ActivityLine key={e.id} entry={e} />
+            ))}
+          </ul>
+        ))}
+    </section>
   );
 }
 
-/** One activity-log line, styled by its severity level. */
 function ActivityLine({ entry }: { entry: ActivityEntry }): JSX.Element {
   return (
     <li
-      className={`spork-activity-line spork-activity-${entry.level}`}
+      className="spork-activity-line"
       data-level={entry.level}
       data-testid="activity-entry"
     >
+      <span className="spork-activity-ico" aria-hidden="true">
+        <Icon name={LEVEL_ICON[entry.level]} size={12} />
+      </span>
       <time className="spork-activity-ts" dateTime={new Date(entry.ts).toISOString()}>
         {formatTime(entry.ts)}
       </time>

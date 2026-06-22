@@ -33,8 +33,14 @@ export interface NodeTypeDescriptor {
   label: string;
   /** Card accent color (CSS color string). */
   color: string;
-  /** A short icon glyph rendered on the card (resolved from the icon name). */
+  /** A short icon glyph (legacy fallback; the SVG icon set uses `iconName`). */
   icon: string;
+  /**
+   * The icon NAME from `ui_contributions.icon` (e.g. "pencil"), resolved by the
+   * SVG icon set (src/ui/icons.tsx). This is the schema-driven icon identity; an
+   * unknown name falls back to the neutral circle icon.
+   */
+  iconName: string;
   /** The node family this kind belongs to (drives some toolbar gating). */
   family: Family;
 }
@@ -85,6 +91,85 @@ const BUILTIN_UI_CONTRIBUTIONS: Readonly<
     displayName: "Stress",
     family: "observing",
   },
+  // P6: the read-only agent run attaches its answer as a context node (DESIGN
+  // §6.6). Matches the daemon's agent_context_descriptor ui_contributions.
+  "agent-context": {
+    color: "#a78bfa",
+    icon: "messages-square",
+    displayName: "Agent",
+    family: "context",
+  },
+  // P7: a gated merge attaches an immutable gate-verdict node (DESIGN §8.3).
+  // Matches the daemon's gate_descriptor ui_contributions.
+  gate: {
+    color: "#f59e0b",
+    icon: "gate",
+    displayName: "Gate",
+    family: "observing",
+  },
+  // R2/R3 (REALIGNMENT_PLAN §3a): offline mirrors of the agentic + deterministic
+  // action node-type descriptors. These render correct cards/legend NOW even
+  // though the daemon dispatch that mints them lands in R3 (unknown-kind degrades
+  // gracefully); R3 registers the authoritative `ui_contributions` to match.
+  //
+  // Agentic family — an agent "mode" differing by its config (instructions /
+  // skills / tools / mcp), like VS Code agent modes.
+  "agent-plan": {
+    color: "#818cf8",
+    icon: "list",
+    displayName: "Plan",
+    family: "context",
+  },
+  "agent-ask": {
+    color: "#a78bfa",
+    icon: "messages-square",
+    displayName: "Ask",
+    family: "context",
+  },
+  "agent-explore": {
+    color: "#38bdf8",
+    icon: "search",
+    displayName: "Explore",
+    family: "context",
+  },
+  "agent-work": {
+    color: "#4ade80",
+    icon: "pencil",
+    displayName: "Work",
+    family: "mutating",
+  },
+  // Deterministic action family — repetitive actions as first-class nodes that
+  // record their shell output + result.
+  "action-run-tests": {
+    color: "#3b82f6",
+    icon: "check-circle",
+    displayName: "Run tests",
+    family: "observing",
+  },
+  "action-stress": {
+    color: "#a855f7",
+    icon: "activity",
+    displayName: "Stress",
+    family: "observing",
+  },
+  "action-sanity": {
+    color: "#f59e0b",
+    icon: "shield-check",
+    displayName: "Sanity",
+    family: "observing",
+  },
+  "action-git-push": {
+    color: "#f472b6",
+    icon: "upload",
+    displayName: "Push",
+    family: "observing",
+  },
+  "action-git-commit": {
+    color: "#fb923c",
+    icon: "git-commit",
+    displayName: "Commit",
+    family: "observing",
+  },
 };
 
 /**
@@ -114,6 +199,7 @@ function fallbackDescriptor(kind: string): NodeTypeDescriptor {
     label: kind,
     color: "#9ca3af",
     icon: "○",
+    iconName: "circle",
     family: "context",
   };
 }
@@ -148,6 +234,7 @@ export function descriptorFromUiContributions(
     label,
     color,
     icon: iconGlyph(iconName),
+    iconName: iconName ?? base.iconName,
     family: family ?? base.family,
   };
 }
@@ -172,7 +259,42 @@ export function descriptorFor(kind: string): NodeTypeDescriptor {
   return BUILTIN_DESCRIPTORS[kind] ?? fallbackDescriptor(kind);
 }
 
-/** Every known descriptor, for rendering the legend. */
+/** Every known descriptor (for resolving a kind to its card/legend visuals). */
 export function allDescriptors(): NodeTypeDescriptor[] {
   return Object.values(BUILTIN_DESCRIPTORS);
+}
+
+/**
+ * The node kinds that are meaningful to **create from anywhere**, without any
+ * knowledge of the codebase (REALIGNMENT_PLAN §1, §3a) — the universal agentic
+ * modes. The deterministic action / check / merge / gate kinds are *contextual*:
+ * they only make sense once a human or the orchestrator has studied the project
+ * (its test commands, stress profile, etc.), so they are NOT advertised as
+ * always-available defaults. The legend shows these PLUS whatever kinds actually
+ * exist in the current graph (so a contextual type appears once it's real, never
+ * before) — keeping the legend honest rather than a menu of maybe-meaningless
+ * types.
+ */
+export const CREATABLE_DEFAULT_KINDS: readonly string[] = [
+  "agent-ask",
+  "agent-plan",
+  "agent-explore",
+  "agent-work",
+];
+
+/**
+ * The descriptors to show in the legend: the universal agentic creatables plus
+ * any kind that has at least one instance in the graph (`presentKinds`). This is
+ * honest — it never lists a contextual action/check type until one really exists.
+ */
+export function legendDescriptors(presentKinds: Iterable<string>): NodeTypeDescriptor[] {
+  const present = new Set(presentKinds);
+  const show = new Set<string>([...CREATABLE_DEFAULT_KINDS, ...present]);
+  // Preserve the BUILTIN_DESCRIPTORS order; unknown present kinds get a fallback.
+  const known = allDescriptors().filter((d) => show.has(d.kind));
+  const knownKinds = new Set(known.map((d) => d.kind));
+  const extra = [...present]
+    .filter((k) => !knownKinds.has(k))
+    .map((k) => descriptorFor(k));
+  return [...known, ...extra];
 }

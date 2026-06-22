@@ -111,6 +111,19 @@ pub enum CommandResult {
         /// Whether the branch was pushed to a remote.
         pushed: bool,
     },
+
+    /// The reply to the P7 read commands [`Command::NodeContext`],
+    /// [`Command::NodeHandoff`], and [`Command::HistoryQuery`]: structured
+    /// read-only data returned inline as JSON (the compiled context, the handoff
+    /// document, or the History MCP JSON-RPC response). These are reads with no
+    /// event to reconcile against, so the payload rides here directly (CLAUDE.md
+    /// C3 — one additive variant for the read surface rather than a variant per
+    /// query). Appended after the frozen variants, so existing wire forms are
+    /// unchanged.
+    Read {
+        /// The structured read result.
+        data: serde_json::Value,
+    },
 }
 
 impl CommandResult {
@@ -157,6 +170,10 @@ impl CommandResult {
             Command::GitExport { .. } | Command::GitPush { .. } => {
                 matches!(self, CommandResult::Git { .. })
             }
+            // The P7 read commands reply with the inline `Read` JSON variant.
+            Command::NodeContext { .. }
+            | Command::NodeHandoff { .. }
+            | Command::HistoryQuery { .. } => matches!(self, CommandResult::Read { .. }),
             // Every other command is a pure mutation. This includes the P5
             // additions `NodeRunCheck` and `BranchMerge`: both return only an
             // `op_id`, with their durable effect arriving over the event stream
@@ -202,6 +219,9 @@ mod tests {
                 branch: "spork/abc".into(),
                 commit_sha: "b".repeat(40),
                 pushed: true,
+            },
+            CommandResult::Read {
+                data: serde_json::json!({"prefixHash": "abc", "layers": []}),
             },
         ]
     }
@@ -282,6 +302,22 @@ mod tests {
             node_id: node,
             against: None
         }));
+
+        // The P7 read commands accept the inline `Read` shape and nothing else.
+        let read = CommandResult::Read {
+            data: serde_json::json!({"ok": true}),
+        };
+        assert!(read.matches_command(&Command::NodeContext { node_id: node }));
+        assert!(read.matches_command(&Command::NodeHandoff { node_id: node }));
+        assert!(read.matches_command(&Command::HistoryQuery {
+            request: serde_json::json!({}),
+        }));
+        assert!(!read.matches_command(&Command::NodeRestore { node_id: node }));
+        assert!(!CommandResult::Mutation {
+            op_id: Ulid::new(),
+            ids: serde_json::json!({})
+        }
+        .matches_command(&Command::NodeContext { node_id: node }));
     }
 
     #[test]

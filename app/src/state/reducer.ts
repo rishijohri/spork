@@ -22,7 +22,7 @@ import type {
 
 /** An empty view-model, used as the reducer's seed. */
 export const EMPTY_VIEW: GraphView = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   nodes: [],
   edges: [],
   refs: [],
@@ -41,6 +41,12 @@ function placeholderNode(id: Ulid): NodeView {
     branchId: "main",
     parentIds: [],
     model: null,
+    cost: null,
+    gate: null,
+    // R2 additive view fields — a placeholder is on the default line, no state.
+    presentationStatus: null,
+    lineLabel: "main",
+    forkedFrom: null,
   };
 }
 
@@ -135,11 +141,17 @@ export function applyOpLogEvent(
             : placeholderNode(ev.to),
         ];
       }
-      nodes = nodes.map((n) =>
-        n.id === ev.to && !n.parentIds.includes(ev.from)
-          ? { ...n, parentIds: [...n.parentIds, ev.from] }
-          : n,
-      );
+      // DERIVED_FROM is an *attachment* (a read-only agent/context node attached
+      // to the node it describes), not lineage — it must NOT add a parent link,
+      // or the attached node would be laid out as a code ancestor (DESIGN §6.3,
+      // §6.6). Every other edge records the parent relation the layout uses.
+      if (ev.edge !== "DERIVED_FROM") {
+        nodes = nodes.map((n) =>
+          n.id === ev.to && !n.parentIds.includes(ev.from)
+            ? { ...n, parentIds: [...n.parentIds, ev.from] }
+            : n,
+        );
+      }
       return {
         ...state,
         nodes,
@@ -208,6 +220,10 @@ export function applyOpLogEvent(
     case "OP_UNDONE":
     case "OP_REDONE":
     case "GC_PERFORMED":
+    // P7: the gate-verdict node and the checkout's HEAD move arrive via
+    // NODE_CREATED / EDGE_ADDED / REF_MOVED; these markers are bookkeeping-only.
+    case "GATE_EVALUATED":
+    case "CHECKOUT_PERFORMED":
       // Bookkeeping-only for the view-model; no node/edge/ref change to fold.
       // (A real slice may refetch graph_view on these; the reducer stays pure.)
       return state;

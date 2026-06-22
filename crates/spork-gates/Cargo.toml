@@ -1,0 +1,17 @@
+[package]
+name = "spork-gates"
+version = "0.1.0"
+edition = "2021"
+description = "Spork P7 quality gates: a declarative GatePolicy predicate grammar over result envelopes + baselines, severities, flaky handling, and an immutable versioned GateVerdict that travels with the snapshot (DESIGN §8.3, A.4)."
+
+[dependencies]
+spork-runner = { path = "../spork-runner" }
+spork-baseline = { path = "../spork-baseline" }
+spork-hash = { path = "../spork-hash" }
+spork-canon = { path = "../spork-canon" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+ulid = { workspace = true }

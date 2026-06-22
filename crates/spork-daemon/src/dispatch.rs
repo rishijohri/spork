@@ -86,6 +86,41 @@ impl Daemon {
             } => self.cmd_branch_merge(&into_ref, from_node_id, resolution),
             Command::GitExport { node_id, branch } => self.cmd_git_export(node_id, branch),
             Command::GitPush { node_id, remote } => self.cmd_git_push(node_id, remote),
+            Command::NodeAgentRun {
+                target_node_id,
+                prompt,
+                model_key,
+                privacy,
+                intent,
+            } => self.cmd_node_agent_run(target_node_id, &prompt, &model_key, &privacy, intent),
+            Command::BranchMergeGated {
+                into_ref,
+                from_node_id,
+                resolution,
+                gate,
+                baseline,
+                override_reason,
+            } => self.cmd_branch_merge_gated(
+                &into_ref,
+                from_node_id,
+                resolution,
+                gate,
+                baseline,
+                override_reason,
+            ),
+            Command::NodeCheckout { node_id } => self.cmd_node_checkout(node_id),
+            Command::NodeContext { node_id } => self.cmd_node_context(node_id),
+            Command::NodeHandoff { node_id } => self.cmd_node_handoff(node_id),
+            Command::HistoryQuery { request } => self.cmd_history_query(request),
+            Command::ProjectImport { branch_id, origin } => {
+                self.cmd_project_import(&branch_id, &origin)
+            }
+            Command::NodeAgentEdit {
+                target_node_id,
+                prompt,
+                model_key,
+                privacy,
+            } => self.cmd_node_agent_edit(target_node_id, &prompt, &model_key, &privacy),
         }
     }
 

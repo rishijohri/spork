@@ -63,7 +63,7 @@ mod event;
 mod handler;
 mod result;
 
-pub use command::{Command, COMMAND_SCHEMA_VERSION};
+pub use command::{AgentRunIntent, Command, COMMAND_SCHEMA_VERSION};
 pub use ephemeral::{EphemeralChannel, EphemeralFrame, EPHEMERAL_FRAME_SCHEMA_VERSION};
 pub use error::IpcError;
 pub use event::{MaybeEvent, OpLogEvent, OP_LOG_EVENT_SCHEMA_VERSION};
